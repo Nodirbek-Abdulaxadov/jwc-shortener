@@ -43,20 +43,6 @@ curl -I http://localhost:8080/a3f9c2d
 # → Location: https://example.com/very/long/path?with=many&query=params
 ```
 
-## Production deploy
-
-This app is deployed via the [`musanna-soft/k8s-gitops`](https://github.com/musanna-soft/k8s-gitops) repo at `apps/jwc-shortener/`. Pipeline:
-
-```
-push to main (this repo)
-  → GitHub Actions builds the docker image with `jwc build --native`
-  → image pushed to ghcr.io/nodirbek-abdulaxadov/jwc-shortener
-  → CI writes the new tag into k8s-gitops/apps/jwc-shortener/deployment.yaml
-  → ArgoCD picks up the commit, rolls the pod
-```
-
-Time from `git push` to a new pod serving traffic: **~5–7 minutes** (most of that is the `jwc build --native` step).
-
 ## Stack
 
 - **JWC** for the entire application (1 file, ~90 LoC).
