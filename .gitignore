@@ -1,0 +1,5 @@
+/bin
+/.jwc-build
+/target
+.env
+.env.local

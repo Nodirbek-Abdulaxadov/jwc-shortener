@@ -1,0 +1,30 @@
+# --- builder: compile JWC source → native binary -----------------------
+FROM rust:1.83-slim AS builder
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+
+# Install the jwc CLI. Pin the version so a fresh release doesn't silently
+# rebuild every image — bump deliberately when adopting new features.
+ARG JWC_VERSION=0.3.4
+RUN curl -fsSL https://github.com/Nodirbek-Abdulaxadov/jwc-lang/releases/download/v${JWC_VERSION}/jwc-x86_64-unknown-linux-gnu.tar.gz \
+        | tar -xz -C /usr/local/bin
+
+COPY . .
+RUN jwc build --native --release
+
+# --- runtime ----------------------------------------------------------
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates wget && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=builder /app/bin/release/jwc-shortener /usr/local/bin/jwc-shortener
+# Migrations are copied so the deployment can run `migrate up` once on boot.
+COPY --from=builder /app/migrations /app/migrations
+COPY --from=builder /app/jwc-shortener.jwcproj /app/jwc-shortener.jwcproj
+EXPOSE 8080
+ENV RUST_LOG=info
+HEALTHCHECK --interval=30s --timeout=3s \
+    CMD wget -q -O- http://127.0.0.1:8080/healthz || exit 1
+CMD ["jwc-shortener"]

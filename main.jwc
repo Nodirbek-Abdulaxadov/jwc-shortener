@@ -1,0 +1,92 @@
+// jwc-shortener — minimal URL shortener.
+//
+// Endpoints:
+//   GET  /healthz          → {"status":"ok"}
+//   POST /api/links        → { "url": "https://..." }            → { code, short }
+//   GET  /:code            → 302 redirect to the original URL
+//   GET  /api/links/:code  → { url, hits, created_at }
+
+errorHandler (e) {
+    return internalError(e.message);
+}
+
+dbcontext AppDb : Postgres;
+
+entity Link of AppDb {
+    code       varchar(8) pk;    // 7-char slug used in the short URL
+    url        varchar(2048);    // original URL
+    hits       int;              // click counter
+    created_at datetime;
+}
+
+route GET "healthz" {
+    return json({ status: "ok" });
+}
+
+route POST "api/links" {
+    validate body {
+        url: required, minLength(8), maxLength(2048);
+    }
+    let req = body();
+
+    // 7-char slug from a uuid (strip dashes + take first 7). The unique
+    // PK enforces correctness if a (vanishingly unlikely) collision hits.
+    let raw = lower(replace(uuid(), "-", ""));
+    let short_code = "";
+    let i = 0;
+    for ch in json_parse(split(raw, "")) {
+        if (i >= 7) { break; }
+        short_code = short_code + ch;
+        i = i + 1;
+    }
+
+    let row = new Link();
+    row.code = short_code;
+    row.url  = req.url;
+    row.hits = 0;
+    row.created_at = now();
+    insert row into AppDb.Link;
+
+    return created({
+        code:  short_code,
+        short: env("PUBLIC_BASE_URL") + "/" + short_code
+    });
+}
+
+route GET "{code}" {
+    let code = path_param("code");
+
+    // Healthz / api are matched by their own routes; defensive guard for
+    // anyone hitting them through the catch-all.
+    if (code == "healthz" or code == "api") {
+        return notFound({ error: "not found" });
+    }
+
+    let link = select Link from AppDb.Link where Link.code == @code first;
+    if (link == null) {
+        return notFound({ error: "no such link" });
+    }
+
+    link.hits = link.hits + 1;
+    update link in AppDb.Link;
+
+    return statusCode(302, { Location: link.url });
+}
+
+route GET "api/links/{code}" {
+    let code = path_param("code");
+    let link = select Link from AppDb.Link where Link.code == @code first;
+    if (link == null) {
+        return notFound({ error: "no such link" });
+    }
+    return ok({
+        code:       link.code,
+        url:        link.url,
+        hits:       link.hits,
+        created_at: link.created_at
+    });
+}
+
+function main() {
+    serve(8080);
+}
