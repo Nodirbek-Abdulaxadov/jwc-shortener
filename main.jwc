@@ -256,14 +256,15 @@ route GET "healthz" {
     return json({ status: "ok" });
 }
 
-// JWC's HTTP server still sets `content-type: application/json` on string
-// responses — browsers render HTML anyway, strict clients may not.
+// JWC 0.3.6+ ships the `html(...)` response helper so these routes can
+// declare `text/html; charset=utf-8` explicitly — browsers and strict
+// clients now both render the page instead of treating it as JSON.
 route GET "/" use MetricsTracker {
-    return landing_html();
+    return html(landing_html());
 }
 
 route GET "docs" {
-    return landing_docs();
+    return html(landing_docs());
 }
 
 route GET "openapi.json" {
