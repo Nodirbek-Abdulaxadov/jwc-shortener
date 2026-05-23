@@ -2,7 +2,7 @@
 
 A real production app written in [JWC](https://github.com/Nodirbek-Abdulaxadov/jwc-lang) — minimal URL shortener.
 
-Live: <https://link-jwc.1kb.uz/>
+Live: <https://1kb.uz/>
 
 ## Endpoints
 

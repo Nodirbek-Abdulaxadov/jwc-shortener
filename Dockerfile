@@ -7,9 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install the jwc CLI. Pin the version so a fresh release doesn't silently
 # rebuild every image — bump deliberately when adopting new features.
-ARG JWC_VERSION=0.3.4
-RUN curl -fsSL https://github.com/Nodirbek-Abdulaxadov/jwc-lang/releases/download/v${JWC_VERSION}/jwc-x86_64-unknown-linux-gnu.tar.gz \
-        | tar -xz -C /usr/local/bin
+ARG JWC_VERSION=0.3.5
+RUN curl -fsSL https://github.com/Nodirbek-Abdulaxadov/jwc-lang/releases/download/v${JWC_VERSION}/jwc-v${JWC_VERSION}-x86_64-linux.tar.gz \
+        | tar -xz -C /usr/local/bin \
+    && chmod +x /usr/local/bin/jwc
 
 COPY . .
 RUN jwc build --native --release
