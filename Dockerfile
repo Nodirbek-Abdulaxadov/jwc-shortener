@@ -1,5 +1,8 @@
 # --- builder: compile JWC source → native binary -----------------------
-FROM rust:1.83-slim AS builder
+# `rust:1.90-slim` ships Debian Trixie (glibc 2.40), matching the build
+# host of the pinned jwc release binary. Older bases (rust:1.83-slim →
+# Bookworm, glibc 2.36) hit `GLIBC_2.39 not found (required by jwc)`.
+FROM rust:1.90-slim AS builder
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
