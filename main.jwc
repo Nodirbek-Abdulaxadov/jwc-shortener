@@ -59,13 +59,9 @@ middleware RateLimit {
 
 middleware MetricsTracker {
     let p = header("x-jwc-path");
-    if (p == null) {
-        p = "unknown";
-    }
+    if (p == null) { p = "unknown"; }
     let m = header("x-jwc-method");
-    if (m == null) {
-        m = "GET";
-    }
+    if (m == null) { m = "GET"; }
     try {
         let row = new ApiCall();
         row.path = p;

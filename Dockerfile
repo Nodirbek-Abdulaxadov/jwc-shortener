@@ -1,7 +1,7 @@
 # --- builder: compile JWC source → native binary ----------------------
-# v0.3.7 added native AOT support for `cache_get` / `cache_set` / `uuid` /
-# `now` / `raw_sql` — every builtin the merged shortener uses. Back on
-# the small, statically-linked `--native` path.
+# v0.3.7+ added native AOT support for every builtin the merged
+# shortener uses. We stay on the small, statically-linked `--native`
+# path — the INSERT codegen ToSql bug has been fixed upstream.
 #
 # `rust:1.90-slim` ships Debian Trixie (glibc 2.40), matching the build
 # host of the published jwc binary. Older bases (rust:1.83-slim →
@@ -12,7 +12,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
-ARG JWC_VERSION=0.3.7
+ARG JWC_VERSION=0.3.8
 RUN curl -fsSL https://github.com/Nodirbek-Abdulaxadov/jwc-lang/releases/download/v${JWC_VERSION}/jwc-v${JWC_VERSION}-x86_64-linux.tar.gz \
         | tar -xz -C /usr/local/bin \
     && chmod +x /usr/local/bin/jwc \
@@ -36,6 +36,7 @@ COPY --from=builder /usr/local/bin/jwc /usr/local/bin/jwc
 COPY --from=builder /app/migrations /app/migrations
 COPY --from=builder /app/jwc-shortener.jwcproj /app/jwc-shortener.jwcproj
 COPY --from=builder /app/main.jwc /app/main.jwc
+COPY --from=builder /app/views.jwc /app/views.jwc
 EXPOSE 8080
 ENV RUST_LOG=info
 HEALTHCHECK --interval=30s --timeout=3s \
