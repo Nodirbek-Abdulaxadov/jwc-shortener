@@ -27,8 +27,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates wget && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/bin/release/jwc-shortener /usr/local/bin/jwc-shortener
+# `jwc` CLI is bundled too — the init container at deploy time runs
+# `jwc migrate up`, which only exists on the compiler/CLI binary. The
+# AOT-built `jwc-shortener` app only knows how to `serve()`; if you
+# pass it `migrate up` arguments it silently ignores them and starts
+# the HTTP server, which keeps the init container hung forever.
+COPY --from=builder /usr/local/bin/jwc /usr/local/bin/jwc
 COPY --from=builder /app/migrations /app/migrations
 COPY --from=builder /app/jwc-shortener.jwcproj /app/jwc-shortener.jwcproj
+COPY --from=builder /app/main.jwc /app/main.jwc
 EXPOSE 8080
 ENV RUST_LOG=info
 HEALTHCHECK --interval=30s --timeout=3s \
