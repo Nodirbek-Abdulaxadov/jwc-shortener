@@ -58,9 +58,13 @@ middleware RateLimit {
 }
 
 middleware MetricsTracker {
-    let p = header("x-jwc-path");
+    // `request_path` + `request_method` are JWC 0.3.11+ builtins that
+    // expose the live request line. Before that we had to read fake
+    // `x-jwc-path` headers — they never existed, so every row landed
+    // as path="unknown".
+    let p = request_path();
     if (p == null) { p = "unknown"; }
-    let m = header("x-jwc-method");
+    let m = request_method();
     if (m == null) { m = "GET"; }
     try {
         let row = new ApiCall();
