@@ -1,11 +1,15 @@
 // jwc-shortener — URL shortener + landing page at https://1kb.uz.
 //
 // One JWC program serves three things:
-//   1. The landing page at `/`        (HTML, hardcoded in `landing_html()`)
-//   2. The shortener API + redirects  (POST /api/links, GET /:code, ...)
-//   3. Traffic stats + Swagger UI     (/api/v1/stats, /docs, /openapi.json)
+//   1. The landing page at `/`        — see `landing_html()` in views.jwc
+//   2. The shortener API + redirects  — POST /api/links, GET /:code, ...
+//   3. Traffic stats + Swagger UI     — /api/v1/stats, /docs, /openapi.json
 //
-// Caveats inherited from the 1kb-landing merge:
+// File layout:
+//   main.jwc   — entities, middleware, routes, main() (this file)
+//   views.jwc  — HTML / OpenAPI bodies (kept here so this file stays readable)
+//
+// Caveats:
 //   - `latency_ms` is always 0 — middleware can't observe response duration
 //     yet. p50/p95/p99 in /stats are therefore returned as 0.
 //   - Rate limit is per-process (in-process cache, 60s window). Single replica
@@ -75,190 +79,14 @@ middleware MetricsTracker {
     }
 }
 
-// -------------------- HTML / OpenAPI bodies --------------------
-
-function landing_html(): string {
-    return r"<!DOCTYPE html>
-<html lang='en'>
-<head>
-<meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'>
-<title>1kb.uz — shorten a URL, read a language</title>
-<style>
-:root { --bg:#0b0d10; --panel:#14181d; --panel-2:#1b2027; --text:#e6e8eb; --muted:#8a9099; --accent:#6ee7b7; --border:#232830; }
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
-body { font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; max-width: 720px; margin: 0 auto; padding: 48px 24px 64px; }
-h1 { font-size: 40px; letter-spacing: -0.02em; margin: 0 0 4px; }
-h1 .dot { color: var(--accent); }
-.lede { color: var(--muted); font-size: 17px; margin: 0 0 32px; }
-.links { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 32px; }
-.links a { color: var(--text); text-decoration: none; padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; transition: background .15s, border-color .15s; }
-.links a:hover { background: var(--panel-2); border-color: var(--accent); }
-.shortener { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 32px; }
-.shortener label { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
-.shortener .row { display: flex; gap: 8px; }
-.shortener input { flex: 1; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; color: var(--text); font: inherit; }
-.shortener input:focus { outline: none; border-color: var(--accent); }
-.shortener button { background: var(--accent); color: var(--bg); border: 0; border-radius: 6px; padding: 10px 18px; font-weight: 600; cursor: pointer; }
-.shortener button:hover { opacity: 0.9; }
-.shortener .result { margin-top: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--accent); word-break: break-all; }
-.shortener .result.error { color: #f87171; }
-.section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 28px 0 12px; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
-.card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-.card .value { color: var(--text); font-size: 22px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
-.top-list { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px 0; margin-top: 10px; }
-.top-row { display: flex; justify-content: space-between; padding: 10px 16px; border-top: 1px solid var(--border); font-size: 14px; }
-.top-row:first-child { border-top: none; }
-.top-row .path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
-.top-row .hits { color: var(--accent); font-variant-numeric: tabular-nums; }
-footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
-footer a { color: var(--accent); text-decoration: none; }
-footer a:hover { text-decoration: underline; }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: 13px; }
-</style>
-</head>
-<body>
-<h1>1kb<span class='dot'>.uz</span></h1>
-<p class='lede'>A URL shortener served by a JWC program. Same one-file source builds the API and this page.</p>
-
-<div class='shortener'>
-  <label for='url'>Shorten a URL</label>
-  <div class='row'>
-    <input id='url' type='url' placeholder='https://example.com/very/long/path'>
-    <button id='go'>Shorten</button>
-  </div>
-  <div id='out' class='result'></div>
-</div>
-
-<div class='links'>
-  <a href='https://github.com/Nodirbek-Abdulaxadov/jwc-shortener'>Source code</a>
-  <a href='https://jwc.1kb.uz'>JWC language</a>
-  <a href='/docs'>API docs</a>
-  <a href='/openapi.json'>OpenAPI</a>
-</div>
-
-<div class='section-title'>Live stats</div>
-<div id='stats' class='cards'>
-  <div class='card'><div class='label'>Total requests</div><div class='value' id='m-total'>-</div></div>
-  <div class='card'><div class='label'>Last 24h</div><div class='value' id='m-24h'>-</div></div>
-  <div class='card'><div class='label'>p50</div><div class='value' id='m-p50'>-</div></div>
-  <div class='card'><div class='label'>p95</div><div class='value' id='m-p95'>-</div></div>
-  <div class='card'><div class='label'>p99</div><div class='value' id='m-p99'>-</div></div>
-</div>
-
-<div class='section-title'>Top endpoints</div>
-<div id='top' class='top-list'>
-  <div class='top-row'><span class='path'>loading...</span><span class='hits'></span></div>
-</div>
-
-<footer>
-  Made with JWC &mdash; see <a href='https://github.com/Nodirbek-Abdulaxadov/jwc-lang'>github.com/Nodirbek-Abdulaxadov/jwc-lang</a>.
-  Written in <code>main.jwc</code>, 1 file.
-</footer>
-
-<script>
-(function () {
-  function fmtNum(n) { if (n == null) return '-'; if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'; if (n >= 1000) return (n / 1000).toFixed(1) + 'k'; return String(n); }
-  function fmtMs(n) { return (n == null ? '-' : n + ' ms'); }
-  function setText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; }
-
-  var input = document.getElementById('url');
-  var btn   = document.getElementById('go');
-  var out   = document.getElementById('out');
-  function shorten() {
-    var url = input.value.trim();
-    if (!url) { out.className = 'result error'; out.textContent = 'paste a URL first'; return; }
-    out.className = 'result'; out.textContent = 'shortening...';
-    fetch('/api/links', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: url }) })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
-      .then(function (res) {
-        if (!res.ok) { out.className = 'result error'; out.textContent = (res.body && res.body.error) || 'failed'; return; }
-        out.className = 'result'; out.textContent = res.body.short;
-      })
-      .catch(function () { out.className = 'result error'; out.textContent = 'network error'; });
-  }
-  btn.addEventListener('click', shorten);
-  input.addEventListener('keydown', function (e) { if (e.key === 'Enter') shorten(); });
-
-  fetch('/api/v1/stats', { headers: { 'accept': 'application/json' } })
-    .then(function (r) { return r.json(); })
-    .then(function (s) {
-      setText('m-total', fmtNum(s.total));
-      setText('m-24h',   fmtNum(s.last_24h));
-      setText('m-p50',   fmtMs(s.p50_ms));
-      setText('m-p95',   fmtMs(s.p95_ms));
-      setText('m-p99',   fmtMs(s.p99_ms));
-      var top = document.getElementById('top');
-      top.innerHTML = '';
-      var rows = (s.top_endpoints || []);
-      if (rows.length === 0) {
-        var empty = document.createElement('div'); empty.className = 'top-row';
-        var ep = document.createElement('span'); ep.className = 'path'; ep.textContent = '(no traffic yet)';
-        var eh = document.createElement('span'); eh.className = 'hits';
-        empty.appendChild(ep); empty.appendChild(eh); top.appendChild(empty);
-        return;
-      }
-      rows.forEach(function (row) {
-        var div = document.createElement('div'); div.className = 'top-row';
-        var p = document.createElement('span'); p.className = 'path'; p.textContent = row.path;
-        var h = document.createElement('span'); h.className = 'hits'; h.textContent = fmtNum(row.hits);
-        div.appendChild(p); div.appendChild(h);
-        top.appendChild(div);
-      });
-    })
-    .catch(function () { setText('m-total', '?'); });
-})();
-</script>
-</body>
-</html>";
-}
-
-function landing_docs(): string {
-    return r"<!DOCTYPE html>
-<html lang='en'>
-<head>
-<meta charset='utf-8'>
-<title>1kb.uz API — Swagger UI</title>
-<link rel='stylesheet' href='https://unpkg.com/swagger-ui-dist@5/swagger-ui.css'>
-<style>body { margin: 0; }</style>
-</head>
-<body>
-<div id='swagger-ui'></div>
-<script src='https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js'></script>
-<script>
-window.onload = function () {
-  window.ui = SwaggerUIBundle({
-    url: '/openapi.json',
-    dom_id: '#swagger-ui',
-    deepLinking: true,
-    presets: [SwaggerUIBundle.presets.apis],
-    layout: 'BaseLayout'
-  });
-};
-</script>
-</body>
-</html>";
-}
-
-function openapi_spec(): string {
-    // JWC object literals only allow bare identifier keys (no "/") and no
-    // array literals — hand-write the OpenAPI as a string. Swagger UI
-    // validates it as JSON on page load.
-    return "{\"openapi\":\"3.0.3\",\"info\":{\"title\":\"1kb.uz API\",\"version\":\"0.1.0\",\"description\":\"URL shortener + landing, served by a JWC program.\"},\"servers\":[{\"url\":\"https://1kb.uz\"}],\"paths\":{\"/\":{\"get\":{\"summary\":\"Landing page (HTML)\",\"responses\":{\"200\":{\"description\":\"HTML landing page\"}}}},\"/healthz\":{\"get\":{\"summary\":\"Liveness probe\",\"responses\":{\"200\":{\"description\":\"ok\"}}}},\"/api/links\":{\"post\":{\"summary\":\"Create a short link\",\"requestBody\":{\"required\":true,\"content\":{\"application/json\":{\"schema\":{\"type\":\"object\",\"required\":[\"url\"],\"properties\":{\"url\":{\"type\":\"string\",\"format\":\"uri\",\"minLength\":8,\"maxLength\":2048}}}}}},\"responses\":{\"201\":{\"description\":\"Created — returns short code + URL\"},\"400\":{\"description\":\"Validation failed\"}}}},\"/api/links/{code}\":{\"get\":{\"summary\":\"Look up a short link\",\"parameters\":[{\"name\":\"code\",\"in\":\"path\",\"required\":true,\"schema\":{\"type\":\"string\"}}],\"responses\":{\"200\":{\"description\":\"Link metadata\"},\"404\":{\"description\":\"No such link\"}}}},\"/{code}\":{\"get\":{\"summary\":\"Redirect to the original URL\",\"parameters\":[{\"name\":\"code\",\"in\":\"path\",\"required\":true,\"schema\":{\"type\":\"string\"}}],\"responses\":{\"302\":{\"description\":\"Redirect\"},\"404\":{\"description\":\"No such link\"}}}},\"/api/v1/stats\":{\"get\":{\"summary\":\"Aggregate traffic stats\",\"responses\":{\"200\":{\"description\":\"Stats payload\"},\"429\":{\"description\":\"Rate limited (60 req / 60s per IP)\"}}}},\"/openapi.json\":{\"get\":{\"summary\":\"This OpenAPI document\",\"responses\":{\"200\":{\"description\":\"OpenAPI 3.0 JSON\"}}}},\"/docs\":{\"get\":{\"summary\":\"Swagger UI\",\"responses\":{\"200\":{\"description\":\"Interactive API docs (HTML)\"}}}}}}";
-}
-
 // -------------------- routes --------------------
 
 route GET "healthz" {
     return json({ status: "ok" });
 }
 
-// JWC 0.3.6+ ships the `html(...)` response helper so these routes can
-// declare `text/html; charset=utf-8` explicitly — browsers and strict
-// clients now both render the page instead of treating it as JSON.
+// `html(...)` (JWC 0.3.6+) declares `text/html; charset=utf-8` so browsers
+// and strict clients both render the page instead of treating it as JSON.
 route GET "/" use MetricsTracker {
     return html(landing_html());
 }
@@ -302,11 +130,7 @@ route POST "api/links" use MetricsTracker {
 
     // 7-char slug from a uuid (strip dashes + take first 7). The unique
     // PK enforces correctness if a (vanishingly unlikely) collision hits.
-    //
-    // `split(s, "")` returns a JWC Array directly — no `json_parse` wrapper
-    // (that's only needed when crossing a JSON string boundary). The empty
-    // separator produces leading + trailing empty string entries we have
-    // to skip, otherwise the first slot is "" and we get a 6-char slug.
+    // `split(s, "")` returns leading + trailing empty entries we skip.
     let raw = lower(replace(uuid(), "-", ""));
     let short_code = "";
     for ch in split(raw, "") {
@@ -343,9 +167,8 @@ route GET "api/links/{code}" {
     });
 }
 
-// Catch-all redirect. Dedicated routes (healthz, docs, openapi.json, ...)
-// win on the router, but keep a defensive guard for anyone hitting them
-// through the catch-all (case mismatch, trailing dot, etc.).
+// Catch-all redirect. Dedicated routes (healthz, docs, ...) win on the
+// router, but defensive guard for case mismatches / trailing dots.
 route GET "{code}" use MetricsTracker {
     let code = path_param("code");
 
@@ -366,10 +189,8 @@ route GET "{code}" use MetricsTracker {
 }
 
 function main() {
-    // Without this, every DB-touching route 500s with
-    // "DB used before setConnectionString() — call setConnectionString() in main()".
-    // Reads PG_HOST/PG_PORT/PG_USER/PG_PASSWORD/PG_DATABASE from env
-    // (k8s injects them via the jwc-shortener-secret).
+    // Reads PG_* / DATABASE_URL from env — k8s injects them via the
+    // jwc-shortener-secret. Without this every DB-touching route 500s.
     setConnectionString();
     serve(8080);
 }
