@@ -99,7 +99,7 @@ route GET "openapi.json" {
     return openapi_spec();
 }
 
-route GET "api/v1/stats" use RateLimit {
+route GET "api/v1/stats" {
     let total = select count(*) from AppDb.ApiCall;
     let last_24h_raw = raw_sql(
         "SELECT COUNT(*) FROM \"api_call\" WHERE ts > NOW() - INTERVAL '24 hours'",

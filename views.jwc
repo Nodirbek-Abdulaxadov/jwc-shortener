@@ -272,7 +272,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
 <script>
 (function () {
   function fmtNum(n) { if (n == null) return '-'; if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'; if (n >= 1000) return (n / 1000).toFixed(1) + 'k'; return String(n); }
-  function fmtMs(n) { return (n == null ? '-' : n + ' ms'); }
+  function fmtMs(n) { if (n == null || n <= 0) return '-'; return n + ' ms'; }
   function setText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; }
 
   var input = document.getElementById('url');
@@ -304,6 +304,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
       var top = document.getElementById('top');
       top.innerHTML = '';
       var rows = (s.top_endpoints || []);
+      if (typeof rows === 'string') {
+        try { rows = JSON.parse(rows); } catch (_) { rows = []; }
+      }
       if (rows.length === 0) {
         var empty = document.createElement('div'); empty.className = 'top-row';
         var ep = document.createElement('span'); ep.className = 'path'; ep.textContent = '(no traffic yet)';
