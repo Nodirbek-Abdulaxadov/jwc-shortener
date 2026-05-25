@@ -59,3 +59,5 @@ try QR-style SVG generation before moving it into a separate repository.
 - Manifest: `qr-lite/qr-lite.jwcproj` (`type: "pkg"`, `pkgVersion: "0.1.0"`).
 - Exported function: `qr_svg(text: string): string`.
 - Output: deterministic QR-like SVG for local UI/API flow testing.
+- App integration (no publish): `jwc-shortener.jwcproj` depends on `./qr-lite`
+  via local `path` source, and `POST /api/links` now returns `qr_svg`.
