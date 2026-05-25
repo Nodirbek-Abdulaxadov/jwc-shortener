@@ -62,8 +62,10 @@ function qr_svg(text: string): string {
     svg = svg + "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 " + dim + " " + dim + "' shape-rendering='crispEdges'>";
     svg = svg + "<rect width='100%' height='100%' fill='white'/>";
 
-    for y in range(0, n - 1) {
-        for x in range(0, n - 1) {
+    let y = 0;
+    while (y < n) {
+        let x = 0;
+        while (x < n) {
             let on = false;
 
             if (qr_finder("", x, y, n)) {
@@ -96,7 +98,9 @@ function qr_svg(text: string): string {
                 let py = (y + quiet) * module;
                 svg = svg + "<rect x='" + px + "' y='" + py + "' width='" + module + "' height='" + module + "' fill='black'/>";
             }
+            x = x + 1;
         }
+        y = y + 1;
     }
 
     svg = svg + "</svg>";
