@@ -106,17 +106,28 @@ route GET "api/v1/stats" {
         "[]"
     );
     let last_24h = int(last_24h_raw);
+    let total_links = select count(*) from AppDb.Link;
+    let total_clicks_raw = raw_sql(
+        "SELECT COALESCE(SUM(hits), 0) FROM \"link\"",
+        "0"
+    );
+    let total_clicks = int(total_clicks_raw);
+    let top_link_hits_raw = raw_sql(
+        "SELECT COALESCE(MAX(hits), 0) FROM \"link\"",
+        "0"
+    );
+    let top_link_hits = int(top_link_hits_raw);
     let top_raw = raw_sql(
-        "SELECT COALESCE(json_agg(t), '[]'::json)::text FROM (SELECT path, COUNT(*) AS hits FROM \"api_call\" GROUP BY path ORDER BY hits DESC LIMIT 5) t",
+        "SELECT COALESCE(json_agg(t), '[]'::json)::text FROM (SELECT code, hits FROM \"link\" WHERE hits > 0 ORDER BY hits DESC LIMIT 5) t",
         "[]"
     );
     return json({
         total:         total,
         last_24h:      last_24h,
+        total_links:   total_links,
+        total_clicks:  total_clicks,
+        top_link_hits: top_link_hits,
         top_endpoints: top_raw,
-        p50_ms:        0,
-        p95_ms:        0,
-        p99_ms:        0,
         written_in:    "JWC",
         source:        "https://github.com/Nodirbek-Abdulaxadov/jwc-shortener"
     });

@@ -254,12 +254,12 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
 <div id='stats' class='cards'>
   <div class='card'><div class='label'>Total requests</div><div class='value' id='m-total'>-</div></div>
   <div class='card'><div class='label'>Last 24h</div><div class='value' id='m-24h'>-</div></div>
-  <div class='card'><div class='label'>p50</div><div class='value' id='m-p50'>-</div></div>
-  <div class='card'><div class='label'>p95</div><div class='value' id='m-p95'>-</div></div>
-  <div class='card'><div class='label'>p99</div><div class='value' id='m-p99'>-</div></div>
+  <div class='card'><div class='label'>Total links</div><div class='value' id='m-links'>-</div></div>
+  <div class='card'><div class='label'>Total clicks</div><div class='value' id='m-clicks'>-</div></div>
+  <div class='card'><div class='label'>Top link hits</div><div class='value' id='m-top-hits'>-</div></div>
 </div>
 
-<div class='section-title'>Top endpoints</div>
+<div class='section-title'>Top links</div>
 <div id='top' class='top-list'>
   <div class='top-row'><span class='path'>loading...</span><span class='hits'></span></div>
 </div>
@@ -272,7 +272,6 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
 <script>
 (function () {
   function fmtNum(n) { if (n == null) return '-'; if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'; if (n >= 1000) return (n / 1000).toFixed(1) + 'k'; return String(n); }
-  function fmtMs(n) { if (n == null || n <= 0) return '-'; return n + ' ms'; }
   function setText(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; }
 
   var input = document.getElementById('url');
@@ -287,6 +286,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
       .then(function (res) {
         if (!res.ok) { out.className = 'result error'; out.textContent = (res.body && res.body.error) || 'failed'; return; }
         out.className = 'result'; out.textContent = res.body.short;
+        input.value = '';
       })
       .catch(function () { out.className = 'result error'; out.textContent = 'network error'; });
   }
@@ -298,9 +298,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
     .then(function (s) {
       setText('m-total', fmtNum(s.total));
       setText('m-24h',   fmtNum(s.last_24h));
-      setText('m-p50',   fmtMs(s.p50_ms));
-      setText('m-p95',   fmtMs(s.p95_ms));
-      setText('m-p99',   fmtMs(s.p99_ms));
+      setText('m-links', fmtNum(s.total_links));
+      setText('m-clicks', fmtNum(s.total_clicks));
+      setText('m-top-hits', fmtNum(s.top_link_hits));
       var top = document.getElementById('top');
       top.innerHTML = '';
       var rows = (s.top_endpoints || []);
@@ -316,7 +316,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
       }
       rows.forEach(function (row) {
         var div = document.createElement('div'); div.className = 'top-row';
-        var p = document.createElement('span'); p.className = 'path'; p.textContent = row.path;
+        var p = document.createElement('span'); p.className = 'path'; p.textContent = '/' + row.code;
         var h = document.createElement('span'); h.className = 'hits'; h.textContent = fmtNum(row.hits);
         div.appendChild(p); div.appendChild(h);
         top.appendChild(div);
