@@ -50,6 +50,23 @@ function qr_should_fill(seed: int, x: int, y: int): bool {
     return (v == 0 or v == 2 or v == 3 or v == 7);
 }
 
+function qr_is_on(seed: int, x: int, y: int, n: int): bool {
+    if (qr_finder("", x, y, n)) {
+        let is_on = true;
+        if (x >= 1 and x <= 5 and y >= 1 and y <= 5) { is_on = false; }
+
+        let xr = x - (n - 7);
+        if (xr >= 1 and xr <= 5 and y >= 1 and y <= 5) { is_on = false; }
+
+        let yb = y - (n - 7);
+        if (x >= 1 and x <= 5 and yb >= 1 and yb <= 5) { is_on = false; }
+
+        if (qr_finder_inner(x, y, n)) { is_on = true; }
+        return is_on;
+    }
+    return qr_should_fill(seed, x, y);
+}
+
 function qr_svg(text: string): string {
     // version-1 sized canvas (21x21), rendered with 8px modules.
     let n = 21;
@@ -66,32 +83,7 @@ function qr_svg(text: string): string {
     while (y < n) {
         let x = 0;
         while (x < n) {
-            let on = false;
-
-            if (qr_finder("", x, y, n)) {
-                // outer finder border black, ring white, center black
-                on = true;
-
-                // top-left ring hole
-                if (x >= 1 and x <= 5 and y >= 1 and y <= 5) {
-                    on = false;
-                }
-                // top-right ring hole
-                let xr = x - (n - 7);
-                if (xr >= 1 and xr <= 5 and y >= 1 and y <= 5) {
-                    on = false;
-                }
-                // bottom-left ring hole
-                let yb = y - (n - 7);
-                if (x >= 1 and x <= 5 and yb >= 1 and yb <= 5) {
-                    on = false;
-                }
-                if (qr_finder_inner(x, y, n)) {
-                    on = true;
-                }
-            } else {
-                on = qr_should_fill(seed, x, y);
-            }
+            let on = qr_is_on(seed, x, y, n);
 
             if (on) {
                 let px = (x + quiet) * module;
