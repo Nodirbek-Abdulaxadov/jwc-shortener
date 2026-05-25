@@ -259,7 +259,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
   <div class='card'><div class='label'>Top link hits</div><div class='value' id='m-top-hits'>-</div></div>
 </div>
 
-<div class='section-title'>Top links</div>
+<div class='section-title'>Top short URLs</div>
 <div id='top' class='top-list'>
   <div class='top-row'><span class='path'>loading...</span><span class='hits'></span></div>
 </div>
@@ -316,7 +316,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
       }
       rows.forEach(function (row) {
         var div = document.createElement('div'); div.className = 'top-row';
-        var p = document.createElement('span'); p.className = 'path'; p.textContent = '/' + row.code;
+        var p = document.createElement('span'); p.className = 'path'; p.textContent = window.location.host + '/' + row.code;
         var h = document.createElement('span'); h.className = 'hits'; h.textContent = fmtNum(row.hits);
         div.appendChild(p); div.appendChild(h);
         top.appendChild(div);
