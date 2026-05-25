@@ -1,0 +1,109 @@
+// qr-lite package (MVP)
+// Deterministic QR-like SVG generator for local integration testing.
+//
+// NOTE:
+// - This is intentionally lightweight and pure JWC.
+// - Output is scannable-looking "QR style" SVG for UI/testing flow.
+// - Full ISO QR encoding (mode selection, RS ECC, masking rules) can be
+//   added in later versions.
+
+function qr_hash_seed(text: string): int {
+    let acc = 0;
+    for ch in split(text, "") {
+        if (ch != "") {
+            // 31-based rolling hash, bounded to keep ints small/stable.
+            acc = ((acc * 31) + int(ch)) % 1048576;
+        }
+    }
+    return acc;
+}
+
+function qr_finder(mods: string, x: int, y: int, n: int): bool {
+    // top-left
+    if (x < 7 and y < 7) { return true; }
+    // top-right
+    if (x >= n - 7 and y < 7) { return true; }
+    // bottom-left
+    if (x < 7 and y >= n - 7) { return true; }
+    return false;
+}
+
+function qr_finder_inner(x: int, y: int, n: int): bool {
+    // inner white ring + center for finder blocks
+    // top-left
+    if (x >= 1 and x <= 5 and y >= 1 and y <= 5) {
+        if (x == 1 or x == 5 or y == 1 or y == 5) { return false; }
+        return true;
+    }
+    // top-right (normalize to local 0..6)
+    let xr = x - (n - 7);
+    if (xr >= 1 and xr <= 5 and y >= 1 and y <= 5) {
+        if (xr == 1 or xr == 5 or y == 1 or y == 5) { return false; }
+        return true;
+    }
+    // bottom-left
+    let yb = y - (n - 7);
+    if (x >= 1 and x <= 5 and yb >= 1 and yb <= 5) {
+        if (x == 1 or x == 5 or yb == 1 or yb == 5) { return false; }
+        return true;
+    }
+    return false;
+}
+
+function qr_should_fill(seed: int, x: int, y: int): bool {
+    let v = (seed + (x * 17) + (y * 29) + (x * y * 7)) % 11;
+    return (v == 0 or v == 2 or v == 3 or v == 7);
+}
+
+function qr_svg(text: string): string {
+    // version-1 sized canvas (21x21), rendered with 8px modules.
+    let n = 21;
+    let module = 8;
+    let quiet = 4;
+    let dim = (n + (quiet * 2)) * module;
+    let seed = qr_hash_seed(text);
+
+    let svg = "";
+    svg = svg + "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 " + dim + " " + dim + "' shape-rendering='crispEdges'>";
+    svg = svg + "<rect width='100%' height='100%' fill='white'/>";
+
+    for y in range(0, n - 1) {
+        for x in range(0, n - 1) {
+            let on = false;
+
+            if (qr_finder("", x, y, n)) {
+                // outer finder border black, ring white, center black
+                on = true;
+
+                // top-left ring hole
+                if (x >= 1 and x <= 5 and y >= 1 and y <= 5) {
+                    on = false;
+                }
+                // top-right ring hole
+                let xr = x - (n - 7);
+                if (xr >= 1 and xr <= 5 and y >= 1 and y <= 5) {
+                    on = false;
+                }
+                // bottom-left ring hole
+                let yb = y - (n - 7);
+                if (x >= 1 and x <= 5 and yb >= 1 and yb <= 5) {
+                    on = false;
+                }
+                if (qr_finder_inner(x, y, n)) {
+                    on = true;
+                }
+            } else {
+                on = qr_should_fill(seed, x, y);
+            }
+
+            if (on) {
+                let px = (x + quiet) * module;
+                let py = (y + quiet) * module;
+                svg = svg + "<rect x='" + px + "' y='" + py + "' width='" + module + "' height='" + module + "' fill='black'/>";
+            }
+        }
+    }
+
+    svg = svg + "</svg>";
+    return svg;
+}

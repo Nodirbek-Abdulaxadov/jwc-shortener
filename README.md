@@ -50,3 +50,12 @@ curl -I http://localhost:8080/a3f9c2d
 - **Docker** multi-stage: rust+jwc builder, debian-slim runtime (~80 MB image).
 - **Kubernetes** + ArgoCD via the GitOps repo.
 - **Cloudflare** edge + Let's Encrypt cert via cluster cert-manager.
+
+## Local package prototype: `qr-lite`
+
+This repo now includes a local JWC package prototype at `qr-lite/` so you can
+try QR-style SVG generation before moving it into a separate repository.
+
+- Manifest: `qr-lite/qr-lite.jwcproj` (`type: "pkg"`, `pkgVersion: "0.1.0"`).
+- Exported function: `qr_svg(text: string): string`.
+- Output: deterministic QR-like SVG for local UI/API flow testing.

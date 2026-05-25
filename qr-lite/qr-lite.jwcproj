@@ -1,0 +1,6 @@
+{
+    "name": "qr-lite",
+    "type": "pkg",
+    "pkgVersion": "0.1.0",
+    "dependencies": {}
+}
