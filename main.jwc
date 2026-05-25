@@ -147,9 +147,13 @@ route POST "api/links" use MetricsTracker {
     row.created_at = now();
     insert row into AppDb.Link;
 
+    let short_url = env("PUBLIC_BASE_URL") + "/" + short_code;
+    short_url = replace(short_url, "https://", "");
+    short_url = replace(short_url, "http://", "");
+
     return created({
         code:  short_code,
-        short: env("PUBLIC_BASE_URL") + "/" + short_code
+        short: short_url
     });
 }
 
