@@ -2,5 +2,10 @@
     "name": "jwc-shortener",
     "version": "0.1.0",
     "type": "app",
-    "dependencies": {}
+    "dependencies": {
+        "qr-lite": {
+            "source": "path",
+            "path": "./qr-lite"
+        }
+    }
 }

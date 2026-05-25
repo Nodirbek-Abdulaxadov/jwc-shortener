@@ -164,7 +164,8 @@ route POST "api/links" use MetricsTracker {
 
     return created({
         code:  short_code,
-        short: short_url
+        short: short_url,
+        qr_svg: qr_svg(short_url)
     });
 }
 

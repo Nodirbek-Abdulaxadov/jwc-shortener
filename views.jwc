@@ -34,6 +34,7 @@ h1 .dot { color: var(--accent); }
 .shortener button:hover { opacity: 0.9; }
 .shortener .result { margin-top: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--accent); word-break: break-all; }
 .shortener .result.error { color: #f87171; }
+.shortener .qr-wrap { margin-top: 14px; padding: 10px; border: 1px dashed var(--border); border-radius: 8px; display: inline-block; background: #fff; }
 .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 28px 0 12px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
@@ -201,6 +202,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
     <button id='go'>Shorten</button>
   </div>
   <div id='out' class='result'></div>
+  <div id='qr' class='qr-wrap' style='display:none'></div>
 </div>
 
 <div class='links'>
@@ -277,15 +279,22 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
   var input = document.getElementById('url');
   var btn   = document.getElementById('go');
   var out   = document.getElementById('out');
+  var qr    = document.getElementById('qr');
   function shorten() {
     var url = input.value.trim();
     if (!url) { out.className = 'result error'; out.textContent = 'paste a URL first'; return; }
     out.className = 'result'; out.textContent = 'shortening...';
+    qr.style.display = 'none';
+    qr.innerHTML = '';
     fetch('/api/links', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: url }) })
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
       .then(function (res) {
         if (!res.ok) { out.className = 'result error'; out.textContent = (res.body && res.body.error) || 'failed'; return; }
         out.className = 'result'; out.textContent = res.body.short;
+        if (res.body.qr_svg) {
+          qr.innerHTML = res.body.qr_svg;
+          qr.style.display = 'inline-block';
+        }
         input.value = '';
       })
       .catch(function () { out.className = 'result error'; out.textContent = 'network error'; });
