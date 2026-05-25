@@ -8,14 +8,9 @@
 //   added in later versions.
 
 function qr_hash_seed(text: string): int {
-    let acc = 0;
-    for ch in split(text, "") {
-        if (ch != "") {
-            // 31-based rolling hash, bounded to keep ints small/stable.
-            acc = ((acc * 31) + int(ch)) % 1048576;
-        }
-    }
-    return acc;
+    // Keep this pure-JWC without string->int casting helpers.
+    // Deterministic enough for visual testing: seed by text length.
+    return (length(text) * 97) % 1048576;
 }
 
 function qr_finder(mods: string, x: int, y: int, n: int): bool {
