@@ -1,100 +1,38 @@
-// qr-lite package (MVP)
-// Deterministic QR-like SVG generator for local integration testing.
-//
-// NOTE:
-// - This is intentionally lightweight and pure JWC.
-// - Output is scannable-looking "QR style" SVG for UI/testing flow.
-// - Full ISO QR encoding (mode selection, RS ECC, masking rules) can be
-//   added in later versions.
+// qr-lite — QR codes via barcodeapi.org. Only `qr_img_tag` is exported.
 
-function qr_hash_seed(text: string): int {
-    // Keep this pure-JWC without string->int casting helpers.
-    // Deterministic enough for visual testing: seed by text length.
-    return (length(text) * 97) % 1048576;
-}
-
-function qr_finder(mods: string, x: int, y: int, n: int): bool {
-    // top-left
-    if (x < 7 and y < 7) { return true; }
-    // top-right
-    if (x >= n - 7 and y < 7) { return true; }
-    // bottom-left
-    if (x < 7 and y >= n - 7) { return true; }
-    return false;
-}
-
-function qr_finder_inner(x: int, y: int, n: int): bool {
-    // inner white ring + center for finder blocks
-    // top-left
-    if (x >= 1 and x <= 5 and y >= 1 and y <= 5) {
-        if (x == 1 or x == 5 or y == 1 or y == 5) { return false; }
-        return true;
-    }
-    // top-right (normalize to local 0..6)
-    let xr = x - (n - 7);
-    if (xr >= 1 and xr <= 5 and y >= 1 and y <= 5) {
-        if (xr == 1 or xr == 5 or y == 1 or y == 5) { return false; }
-        return true;
-    }
-    // bottom-left
-    let yb = y - (n - 7);
-    if (x >= 1 and x <= 5 and yb >= 1 and yb <= 5) {
-        if (x == 1 or x == 5 or yb == 1 or yb == 5) { return false; }
-        return true;
-    }
-    return false;
-}
-
-function qr_should_fill(seed: int, x: int, y: int): bool {
-    let v = (seed + (x * 17) + (y * 29) + (x * y * 7)) % 11;
-    return (v == 0 or v == 2 or v == 3 or v == 7);
-}
-
-function qr_is_on(seed: int, x: int, y: int, n: int): bool {
-    if (qr_finder("", x, y, n)) {
-        let is_on = true;
-        if (x >= 1 and x <= 5 and y >= 1 and y <= 5) { is_on = false; }
-
-        let xr = x - (n - 7);
-        if (xr >= 1 and xr <= 5 and y >= 1 and y <= 5) { is_on = false; }
-
-        let yb = y - (n - 7);
-        if (x >= 1 and x <= 5 and yb >= 1 and yb <= 5) { is_on = false; }
-
-        if (qr_finder_inner(x, y, n)) { is_on = true; }
-        return is_on;
-    }
-    return qr_should_fill(seed, x, y);
-}
-
-function qr_svg(text: string): string {
-    // version-1 sized canvas (21x21), rendered with 8px modules.
-    let n = 21;
-    let module = 8;
-    let quiet = 4;
-    let dim = (n + (quiet * 2)) * module;
-    let seed = qr_hash_seed(text);
-
-    let svg = "";
-    svg = svg + "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 " + dim + " " + dim + "' shape-rendering='crispEdges'>";
-    svg = svg + "<rect width='100%' height='100%' fill='white'/>";
-
-    let y = 0;
-    while (y < n) {
-        let x = 0;
-        while (x < n) {
-            let on = qr_is_on(seed, x, y, n);
-
-            if (on) {
-                let px = (x + quiet) * module;
-                let py = (y + quiet) * module;
-                svg = svg + "<rect x='" + px + "' y='" + py + "' width='" + module + "' height='" + module + "' fill='black'/>";
-            }
-            x = x + 1;
+private function qr_encode(text: string): string {
+    let out = "";
+    for ch in split(text, "") {
+        if (ch == "") {
+            // split("", "") returns leading/trailing empties — skip them.
         }
-        y = y + 1;
+        if (ch == " ") { out = out + "%20"; }
+        if (ch == "#") { out = out + "%23"; }
+        if (ch == "?") { out = out + "%3F"; }
+        if (ch == "&") { out = out + "%26"; }
+        if (ch == "/") { out = out + "%2F"; }
+        if (ch == ":") { out = out + "%3A"; }
+        if (
+            ch != "" and
+            ch != " " and
+            ch != "#" and
+            ch != "?" and
+            ch != "&" and
+            ch != "/" and
+            ch != ":"
+        ) {
+            out = out + ch;
+        }
     }
+    return out;
+}
 
-    svg = svg + "</svg>";
-    return svg;
+private function qr_svg_url(text: string): string {
+    let encoded = qr_encode(text);
+    return "https://barcodeapi.org/api/qr/" + encoded + "?format=svg";
+}
+
+public function qr_img_tag(text: string): string {
+    let url = qr_svg_url(text);
+    return "<img src='" + url + "' alt='QR Code'/>";
 }

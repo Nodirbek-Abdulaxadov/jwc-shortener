@@ -1,11 +1,8 @@
 {
-    "name": "jwc-shortener",
-    "version": "0.1.0",
-    "type": "app",
-    "dependencies": {
-        "qr-lite": {
-            "source": "path",
-            "path": "./qr-lite"
-        }
-    }
+  "name": "jwc-shortener",
+  "type": "app",
+  "version": "0.1.0",
+  "dependencies": {
+    "qr-lite": "^0.2.0"
+  }
 }

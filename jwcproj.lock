@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "package": [
+    {
+      "name": "qr-lite",
+      "version": "0.2.0",
+      "source": "registry+https://registry-jwc.1kb.uz/",
+      "checksum": "sha256:2b090c5afc87f0f492ce81a57578874a51f35f1592c7804dbd73e4dd92862133"
+    }
+  ]
+}

@@ -35,6 +35,7 @@ h1 .dot { color: var(--accent); }
 .shortener .result { margin-top: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--accent); word-break: break-all; }
 .shortener .result.error { color: #f87171; }
 .shortener .qr-wrap { margin-top: 14px; padding: 10px; border: 1px dashed var(--border); border-radius: 8px; display: inline-block; background: #fff; }
+.shortener .qr-wrap img { display: block; width: 160px; height: 160px; }
 .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 28px 0 12px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
