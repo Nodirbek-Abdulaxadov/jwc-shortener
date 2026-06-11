@@ -82,12 +82,14 @@ middleware MetricsTracker {
     let m = request_method();
     if (m == null) { m = "GET"; }
     try {
-        // Off-load the INSERT to the background queue so the request hot path
-        // stays at one DB round-trip. The job handler (`metrics_writer`) is
-        // registered in main() before serve() starts.
+        // Inline the INSERT: the native jwc compiler doesn't ship enqueue /
+        // register_job_handler yet, so the original off-load-to-background
+        // plan doesn't compile. Synchronous write keeps the request to one
+        // extra round-trip — fine at our traffic level. Wrapped in try so a
+        // metrics failure never breaks the request.
         let payload = "{\"path\":" + json_escape(p)
                     + ",\"method\":" + json_escape(m) + "}";
-        enqueue("metrics_writer", payload);
+        metrics_writer(payload);
     } catch (e) {
         // Swallow — metrics must never break the request.
     }
@@ -296,10 +298,10 @@ function main() {
     // jwc-shortener-secret. Without this every DB-touching route 500s.
     setConnectionString();
 
-    // Async metrics — must be registered before serve() starts handing out
-    // requests, otherwise the first MetricsTracker call has no handler.
-    // Second arg is the handler function NAME as a string (resolved at call time).
-    register_job_handler("metrics_writer", "metrics_writer");
+    // (register_job_handler removed — the native compiler doesn't ship
+    // background-queue primitives yet. MetricsTracker calls metrics_writer
+    // inline; once jwc-lang adds enqueue/register_job_handler we'll move
+    // it back to async.)
 
     serve(8080);
 }
