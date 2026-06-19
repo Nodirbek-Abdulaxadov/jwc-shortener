@@ -12,7 +12,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
-ARG JWC_VERSION=0.6.1
+ARG JWC_VERSION=0.6.2
 RUN curl -fsSL https://github.com/Nodirbek-Abdulaxadov/jwc-lang/releases/download/v${JWC_VERSION}/jwc-v${JWC_VERSION}-x86_64-linux.tar.gz \
         | tar -xz -C /usr/local/bin \
     && chmod +x /usr/local/bin/jwc \
