@@ -17,9 +17,9 @@
 //   - Metrics rows are written inline by MetricsTracker — the native AOT
 //     build doesn't drive the Postgres job queue (interpreter-only), so the
 //     background-worker plan doesn't compile under `jwc build --native`.
-//   - Redirect is read-then-bump (2 round-trips): the query layer can't
-//     RETURN a column from an atomic UPDATE, so we resolve the URL with a
-//     `select … first` (404s an unknown code) and bump `hits` atomically.
+//   - Redirect bumps hits + resolves the url in one round-trip via a
+//     data-modifying CTE (`WITH … UPDATE … RETURNING … SELECT`). See the
+//     route for why the query-layer `update … set` form can't be used here.
 
 errorHandler (e) {
     return internalError(e.message);
@@ -281,22 +281,29 @@ route GET "{code}" use RateLimit, MetricsTracker {
         return notFound({ error: "not found" });
     }
 
-    // Resolve the target first so an unknown code 404s before we touch the
-    // counter. The old hot path used `raw_sql(UPDATE … RETURNING url)`, but
-    // raw_sql routes any non-SELECT/WITH statement to exec and returns the
-    // affected-row count — so `url` came back as 1 and the redirect Location
-    // became "1". The query layer can't RETURN from an atomic UPDATE, hence
-    // read-then-bump.
-    let link = select Link from AppDb.Link where Link.code == @code first;
-    if (link == null) {
+    // Single round-trip, atomic: a data-modifying CTE bumps hits and the
+    // outer SELECT returns the resolved url. Two earlier approaches both
+    // broke on the native build:
+    //   - `raw_sql(UPDATE … RETURNING url)` alone routes to exec (no
+    //     SELECT/WITH prefix) and returns the affected-row count, so the
+    //     redirect Location became "1".
+    //   - The query-layer `update … set hits = hits + 1` binds the increment
+    //     literal as i64, which Postgres rejects against the int4 `hits`
+    //     column ("error serializing parameter 0").
+    // The CTE wins on both: `hits + 1` stays inline SQL (no bound int), only
+    // `code` is a parameter, and the leading WITH makes raw_sql return the
+    // url column.
+    let params = "[\"" + code + "\"]";
+    let url = raw_sql(
+        "WITH bumped AS (UPDATE \"link\" SET hits = hits + 1 WHERE code = $1 RETURNING url) SELECT url FROM bumped",
+        params
+    );
+
+    if (url == null or url == "") {
         return notFound({ error: "no such link" });
     }
 
-    // Atomic increment — a single prepared UPDATE, no read-modify-write race,
-    // so concurrent redirects can't lose hits.
-    update AppDb.Link set hits = hits + 1 where Link.code == @code;
-
-    return statusCode(302, { Location: link.url });
+    return statusCode(302, { Location: url });
 }
 
 function main() {
