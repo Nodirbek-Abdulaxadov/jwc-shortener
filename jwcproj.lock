@@ -3,9 +3,9 @@
   "package": [
     {
       "name": "qr-lite",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "source": "registry+https://registry-jwc.1kb.uz/",
-      "checksum": "sha256:2b090c5afc87f0f492ce81a57578874a51f35f1592c7804dbd73e4dd92862133"
+      "checksum": "sha256:69815e7ca04b9b47ad131e062fe1d90757679a60f03aafa286fd50d868c9a791"
     }
   ]
 }
