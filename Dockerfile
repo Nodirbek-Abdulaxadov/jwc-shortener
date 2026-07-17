@@ -19,7 +19,13 @@ RUN curl -fsSL https://github.com/Nodirbek-Abdulaxadov/jwc-lang/releases/downloa
     && jwc --version
 
 COPY . .
-RUN jwc build --native --release
+# Force a portable baseline CPU target. `jwc build --native` generates Rust and
+# compiles it with the embedded cargo/rustc toolchain, which honours RUSTFLAGS.
+# Without pinning target-cpu, newer CI runners bake in host-only SIMD (AVX-512)
+# and the binary dies with SIGILL / "trap invalid opcode" on older or
+# feature-masked CPUs — e.g. the QEMU "AMD EPYC" model on the production node.
+# x86-64-v2 (SSE4.2, no AVX) runs on effectively every x86-64 host.
+RUN RUSTFLAGS="-C target-cpu=x86-64-v2" jwc build --native --release
 
 # --- runtime ----------------------------------------------------------
 FROM debian:trixie-slim
