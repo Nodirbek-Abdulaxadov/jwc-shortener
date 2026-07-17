@@ -13,7 +13,26 @@ function landing_html(): string {
 <head>
 <meta charset='utf-8'>
 <meta name='viewport' content='width=device-width, initial-scale=1'>
-<title>1kb.uz — shorten a URL, read a language</title>
+<title>1kb.uz — Free URL Shortener &amp; the JWC Programming Language</title>
+<meta name='description' content='1kb.uz is a fast, free URL shortener with instant QR codes, built entirely in the JWC programming language and its native HTTP server.'>
+<link rel='canonical' href='https://1kb.uz/'>
+<meta name='robots' content='index, follow'>
+<meta name='theme-color' content='#0b0d10'>
+<link rel='icon' type='image/svg+xml' href='data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20rx=%227%22%20fill=%22%230b0d10%22/%3E%3Ccircle%20cx=%2216%22%20cy=%2216%22%20r=%226%22%20fill=%22%236ee7b7%22/%3E%3C/svg%3E'>
+<meta property='og:type' content='website'>
+<meta property='og:site_name' content='1kb.uz'>
+<meta property='og:title' content='1kb.uz — Free URL Shortener and the JWC Programming Language'>
+<meta property='og:description' content='A fast, free URL shortener with instant QR codes, built entirely in the JWC programming language.'>
+<meta property='og:url' content='https://1kb.uz/'>
+<meta property='og:image' content='https://1kb.uz/og.svg'>
+<meta property='og:image:type' content='image/svg+xml'>
+<meta property='og:image:width' content='1200'>
+<meta property='og:image:height' content='630'>
+<meta property='og:image:alt' content='1kb.uz — URL shortener built in the JWC language'>
+<meta name='twitter:card' content='summary_large_image'>
+<meta name='twitter:title' content='1kb.uz — Free URL Shortener and the JWC Programming Language'>
+<meta name='twitter:description' content='A fast, free URL shortener with instant QR codes, built entirely in the JWC programming language.'>
+<meta name='twitter:image' content='https://1kb.uz/og.svg'>
 <style>
 :root { --bg:#0b0d10; --panel:#14181d; --panel-2:#1b2027; --text:#e6e8eb; --muted:#8a9099; --accent:#6ee7b7; --border:#232830; }
 * { box-sizing: border-box; }
@@ -36,7 +55,7 @@ h1 .dot { color: var(--accent); }
 .shortener .result.error { color: #f87171; }
 .shortener .qr-wrap { margin-top: 14px; padding: 10px; border: 1px dashed var(--border); border-radius: 8px; display: inline-block; background: #fff; }
 .shortener .qr-wrap img { display: block; width: 160px; height: 160px; }
-.section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 28px 0 12px; }
+.section-title { font-size: 12px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 28px 0 12px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
 .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -165,11 +184,14 @@ footer a { color: var(--accent); text-decoration: none; }
 footer a:hover { text-decoration: underline; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: 13px; }
 </style>
+" + json_ld() + r"
 </head>
 <body>
+<header>
 <h1>1kb<span class='dot'>.uz</span></h1>
 <p class='lede'>A URL shortener served by a JWC program. Same one-file source builds the API and this page.</p>
-
+</header>
+<main>
 <div class='hero-stats'>
   <div class='hero-card'>
     <div class='hero-kicker'>Throughput</div>
@@ -196,7 +218,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
   </div>
 </div>
 
-<div class='shortener'>
+<section class='shortener' aria-label='Shorten a URL'>
   <label for='url'>Shorten a URL</label>
   <div class='row'>
     <input id='url' type='url' placeholder='https://example.com/very/long/path'>
@@ -204,16 +226,16 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
   </div>
   <div id='out' class='result'></div>
   <div id='qr' class='qr-wrap' style='display:none'></div>
-</div>
+</section>
 
-<div class='links'>
+<nav class='links' aria-label='Project links'>
   <a href='https://github.com/Nodirbek-Abdulaxadov/jwc-shortener'>Source code</a>
   <a href='https://jwc.1kb.uz'>JWC language</a>
   <a href='/docs'>API docs</a>
   <a href='/openapi.json'>OpenAPI</a>
-</div>
+</nav>
 
-<div class='bench'>
+<section class='bench' aria-label='Benchmark results'>
   <div class='bench-head'>
     <div>
       <div class='bench-title'>
@@ -251,9 +273,10 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
       <div class='d'>during stress test</div>
     </div>
   </div>
-</div>
+</section>
 
-<div class='section-title'>Live stats</div>
+<section aria-labelledby='live-stats-title'>
+<h2 class='section-title' id='live-stats-title'>Live stats</h2>
 <div id='stats' class='cards'>
   <div class='card'><div class='label'>Total requests</div><div class='value' id='m-total'>-</div></div>
   <div class='card'><div class='label'>Last 24h</div><div class='value' id='m-24h'>-</div></div>
@@ -261,11 +284,15 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
   <div class='card'><div class='label'>Total clicks</div><div class='value' id='m-clicks'>-</div></div>
   <div class='card'><div class='label'>Top link hits</div><div class='value' id='m-top-hits'>-</div></div>
 </div>
+</section>
 
-<div class='section-title'>Top short URLs</div>
+<section aria-labelledby='top-urls-title'>
+<h2 class='section-title' id='top-urls-title'>Top short URLs</h2>
 <div id='top' class='top-list'>
   <div class='top-row'><span class='path'>loading...</span><span class='hits'></span></div>
 </div>
+</section>
+</main>
 
 <footer>
   Made with JWC &mdash; see <a href='https://github.com/Nodirbek-Abdulaxadov/jwc-lang'>github.com/Nodirbek-Abdulaxadov/jwc-lang</a>.
@@ -344,7 +371,17 @@ function landing_docs(): string {
 <html lang='en'>
 <head>
 <meta charset='utf-8'>
-<title>1kb.uz API — Swagger UI</title>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>1kb.uz API Reference — Interactive Docs (Swagger UI)</title>
+<meta name='description' content='Interactive OpenAPI reference for the 1kb.uz URL shortener API: create short links, resolve codes, and read live traffic stats.'>
+<link rel='canonical' href='https://1kb.uz/docs'>
+<meta name='theme-color' content='#0b0d10'>
+<link rel='icon' type='image/svg+xml' href='data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20rx=%227%22%20fill=%22%230b0d10%22/%3E%3Ccircle%20cx=%2216%22%20cy=%2216%22%20r=%226%22%20fill=%22%236ee7b7%22/%3E%3C/svg%3E'>
+<meta property='og:type' content='website'>
+<meta property='og:site_name' content='1kb.uz'>
+<meta property='og:title' content='1kb.uz API Reference'>
+<meta property='og:description' content='Interactive OpenAPI reference for the 1kb.uz URL shortener API.'>
+<meta property='og:url' content='https://1kb.uz/docs'>
 <link rel='stylesheet' href='https://unpkg.com/swagger-ui-dist@5/swagger-ui.css'>
 <style>body { margin: 0; }</style>
 </head>
@@ -371,4 +408,70 @@ function openapi_spec(): string {
     // array literals — hand-write the OpenAPI as a string. Swagger UI
     // validates it as JSON on page load.
     return "{\"openapi\":\"3.0.3\",\"info\":{\"title\":\"1kb.uz API\",\"version\":\"0.1.0\",\"description\":\"URL shortener + landing, served by a JWC program.\"},\"servers\":[{\"url\":\"https://1kb.uz\"}],\"paths\":{\"/\":{\"get\":{\"summary\":\"Landing page (HTML)\",\"responses\":{\"200\":{\"description\":\"HTML landing page\"}}}},\"/healthz\":{\"get\":{\"summary\":\"Liveness probe\",\"responses\":{\"200\":{\"description\":\"ok\"}}}},\"/api/links\":{\"post\":{\"summary\":\"Create a short link\",\"requestBody\":{\"required\":true,\"content\":{\"application/json\":{\"schema\":{\"type\":\"object\",\"required\":[\"url\"],\"properties\":{\"url\":{\"type\":\"string\",\"format\":\"uri\",\"minLength\":8,\"maxLength\":2048}}}}}},\"responses\":{\"201\":{\"description\":\"Created — returns short code + URL\"},\"400\":{\"description\":\"Validation failed\"}}}},\"/api/links/{code}\":{\"get\":{\"summary\":\"Look up a short link\",\"parameters\":[{\"name\":\"code\",\"in\":\"path\",\"required\":true,\"schema\":{\"type\":\"string\"}}],\"responses\":{\"200\":{\"description\":\"Link metadata\"},\"404\":{\"description\":\"No such link\"}}}},\"/{code}\":{\"get\":{\"summary\":\"Redirect to the original URL\",\"parameters\":[{\"name\":\"code\",\"in\":\"path\",\"required\":true,\"schema\":{\"type\":\"string\"}}],\"responses\":{\"302\":{\"description\":\"Redirect\"},\"404\":{\"description\":\"No such link\"}}}},\"/api/v1/stats\":{\"get\":{\"summary\":\"Aggregate traffic stats\",\"responses\":{\"200\":{\"description\":\"Stats payload\"},\"429\":{\"description\":\"Rate limited (60 req / 60s per IP)\"}}}},\"/openapi.json\":{\"get\":{\"summary\":\"This OpenAPI document\",\"responses\":{\"200\":{\"description\":\"OpenAPI 3.0 JSON\"}}}},\"/docs\":{\"get\":{\"summary\":\"Swagger UI\",\"responses\":{\"200\":{\"description\":\"Interactive API docs (HTML)\"}}}}}}";
+}
+
+// JSON-LD (schema.org WebSite) for the landing page. Kept as a regular
+// (escaped) string — not a raw `r"..."` — because JSON-LD requires real
+// double quotes, which would otherwise terminate a raw string. Injected
+// into the landing `<head>` via string concatenation in `landing_html()`.
+function json_ld(): string {
+    return "<script type='application/ld+json'>{\"@context\":\"https://schema.org\",\"@type\":\"WebSite\",\"name\":\"1kb.uz\",\"alternateName\":\"1kb URL Shortener\",\"url\":\"https://1kb.uz/\",\"description\":\"Fast, free URL shortener with instant QR codes, built in the JWC programming language.\",\"inLanguage\":\"en\"}</script>";
+}
+
+// robots.txt body. Allows crawling everything except the JSON API surface
+// (nothing indexable there) and advertises the sitemap. Served as plain
+// text by the `robots.txt` route.
+function robots_txt(): string {
+    return r"User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://1kb.uz/sitemap.xml
+";
+}
+
+// XML sitemap. Only lists same-host, indexable pages — the landing page and
+// the API reference. XML permits single-quoted attribute values, so this
+// fits in a raw string without escaping (no double quotes to end it early).
+function sitemap_xml(): string {
+    return r"<?xml version='1.0' encoding='UTF-8'?>
+<urlset xmlns='http://www.sitemaps.org/schemas/sitemap/0.9'>
+  <url>
+    <loc>https://1kb.uz/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://1kb.uz/docs</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+</urlset>
+";
+}
+
+// Social-share card (OpenGraph / Twitter `og:image`) generated as SVG so it
+// ships with the source instead of a committed binary. Single-quoted
+// attributes keep it valid inside a raw string. Note: some scrapers
+// (Facebook, LinkedIn, X) prefer a raster 1200x630 PNG — swap the og:image
+// URL for a static og.png if universal previews are needed.
+function og_svg(): string {
+    return r"<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='630' viewBox='0 0 1200 630' role='img' aria-label='1kb.uz — URL shortener built in the JWC language'>
+  <defs>
+    <linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'>
+      <stop offset='0' stop-color='#161b22'/>
+      <stop offset='1' stop-color='#0b0d10'/>
+    </linearGradient>
+    <radialGradient id='glow' cx='0.82' cy='0.12' r='0.7'>
+      <stop offset='0' stop-color='#6ee7b7' stop-opacity='0.18'/>
+      <stop offset='1' stop-color='#6ee7b7' stop-opacity='0'/>
+    </radialGradient>
+  </defs>
+  <rect width='1200' height='630' fill='url(#bg)'/>
+  <rect width='1200' height='630' fill='url(#glow)'/>
+  <text x='96' y='300' font-family='ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif' font-size='132' font-weight='800' letter-spacing='-5' fill='#e6e8eb'>1kb<tspan fill='#6ee7b7'>.uz</tspan></text>
+  <text x='100' y='372' font-family='ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif' font-size='40' fill='#8a9099'>Free URL shortener &#183; built in the JWC language</text>
+  <text x='100' y='470' font-family='ui-monospace, SFMono-Regular, Menlo, monospace' font-size='30' fill='#6ee7b7'>14.6k req/s &#183; 11ms latency &#183; 99.96% uptime</text>
+</svg>
+";
 }
