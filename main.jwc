@@ -165,6 +165,21 @@ route GET "openapi.json" {
     return openapi_spec();
 }
 
+// SEO / crawler endpoints. `robots.txt` and `sitemap.xml` are returned as
+// bare strings (same pattern as `openapi.json`); `og.svg` backs the
+// OpenGraph / Twitter social card referenced from the landing `<head>`.
+route GET "robots.txt" {
+    return robots_txt();
+}
+
+route GET "sitemap.xml" {
+    return sitemap_xml();
+}
+
+route GET "og.svg" {
+    return og_svg();
+}
+
 route GET "api/v1/stats" {
     let total = select count(*) from AppDb.ApiCall;
     let last_24h_raw = raw_sql(
@@ -277,7 +292,8 @@ route GET "{code}" use RateLimit, MetricsTracker {
 
     if (code == "healthz" or code == "readyz" or code == "api"
         or code == "docs" or code == "openapi.json" or code == "stats"
-        or code == "favicon.ico") {
+        or code == "favicon.ico" or code == "robots.txt"
+        or code == "sitemap.xml" or code == "og.svg") {
         return notFound({ error: "not found" });
     }
 
