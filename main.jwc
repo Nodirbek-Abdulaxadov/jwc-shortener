@@ -44,7 +44,18 @@ entity ApiCall of AppDb {
 // spoofed value before injecting its own), then `X-Forwarded-For` as a whole
 // string (rate-limit only needs a stable bucket key — the comma-separated
 // chain still hashes to the same row for the same client), then "unknown".
-function client_ip() {
+// Named `rate_limit_bucket`, not `client_ip`: a built-in of that name exists
+// and shadows a user function in the dispatch order, so the version below
+// was dead code and every request was bucketed by the built-in's
+// `x-forwarded-for` reading instead of the Cloudflare-first order described
+// here. W005 was warning about exactly this.
+//
+// The built-in is the better primitive where it fits — it walks XFF
+// right-to-left and honours JWC_TRUSTED_PROXIES, which this does not. Worth
+// switching to (`JWC_REAL_IP_HEADER=cf-connecting-ip`) once trusted-proxy
+// ranges are configured; until then this keeps the behaviour the comment
+// has always claimed.
+function rate_limit_bucket() {
     let ip = header("cf-connecting-ip");
     if (ip == null) {
         ip = header("x-forwarded-for");
@@ -72,7 +83,7 @@ function client_ip() {
 // limit is a nuisance, not a correctness problem, and failing closed when
 // Redis is down would be the worse outcome.
 middleware RateLimit {
-    if (!redis.rate_limit("rl:" + client_ip(), 60, 60)) {
+    if (!redis.rate_limit("rl:" + rate_limit_bucket(), 60, 60)) {
         return { status: 429, error: "rate limited" };
     }
 }
