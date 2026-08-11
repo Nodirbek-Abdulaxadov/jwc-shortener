@@ -84,7 +84,11 @@ function rate_limit_bucket() {
 // Redis is down would be the worse outcome.
 middleware RateLimit {
     if (!redis.rate_limit("rl:" + rate_limit_bucket(), 60, 60)) {
-        return { status: 429, error: "rate limited" };
+        // `statusCode`, not a bare `{ status: 429 }`: a plain object is a
+        // response *body*, so the key named `status` is just data and the
+        // request came back 200 with a 429-shaped payload. A benchmark
+        // blocked 92,675 requests and every one of them was a 2xx.
+        return statusCode(429, { error: "rate limited" });
     }
 }
 
@@ -160,19 +164,24 @@ route GET "openapi.json" {
     return openapi_spec();
 }
 
-// SEO / crawler endpoints. `robots.txt` and `sitemap.xml` are returned as
-// bare strings (same pattern as `openapi.json`); `og.svg` backs the
-// OpenGraph / Twitter social card referenced from the landing `<head>`.
+// SEO / crawler endpoints. `og.svg` backs the OpenGraph / Twitter social
+// card referenced from the landing `<head>`.
+//
+// All three go through `response(body, mime)` rather than returning a bare
+// string. A bare string carries no content-type, so the runtime falls back
+// to `application/json` — right for `openapi.json` below, wrong for these:
+// a crawler reading `sitemap.xml` as JSON skips it, and a social card
+// served as JSON does not render.
 route GET "robots.txt" {
-    return robots_txt();
+    return response(robots_txt(), "text/plain");
 }
 
 route GET "sitemap.xml" {
-    return sitemap_xml();
+    return response(sitemap_xml(), "application/xml");
 }
 
 route GET "og.svg" {
-    return og_svg();
+    return response(og_svg(), "image/svg+xml");
 }
 
 route GET "api/v1/stats" {
