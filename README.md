@@ -16,12 +16,12 @@ Live: <https://1kb.uz/>
 ## Local dev
 
 ```bash
-# 1. Postgres (dev container)
-docker run -d --name pg -p 5432:5432 \
-    -e POSTGRES_USER=jwc -e POSTGRES_PASSWORD=jwc -e POSTGRES_DB=shortener postgres:17-alpine
+# 1. Postgres + Redis
+docker compose up -d
 
 # 2. Env
 export JWC_DATABASE_URL=postgres://jwc:jwc@localhost:5432/shortener
+export JWC_REDIS_URL=redis://localhost:6379
 export PUBLIC_BASE_URL=http://localhost:8080
 
 # 3. Migrate + run
@@ -29,6 +29,28 @@ jwc migrate up
 jwc run
 # → server on :8080
 ```
+
+Requires **jwc 0.9.2+** — `MetricsTracker` calls `log_insert`, which earlier
+compilers do not know.
+
+### Why `JWC_REDIS_URL` matters
+
+Leave it unset and everything still runs: the `redis` package falls back to
+an in-process cache. That fallback is deliberate — a laptop should not need
+Redis — but it is **not** the production code path, and the difference is
+invisible until it bites:
+
+| | with `JWC_REDIS_URL` | without |
+|---|---|---|
+| `RateLimit` window | shared across replicas | per process — effective limit is `60 × replicas` |
+| `INCR` + `EXPIRE` | one atomic Lua script | two calls, so two concurrent requests can both read the same count |
+
+`/metrics` tells you which one you are on: `jwc_redis_pool_*` series appear
+only when Redis is actually configured.
+
+Set it in the cluster the same way `JWC_DATABASE_URL` is set — the app reads
+it at boot and fails fast on a malformed URL rather than letting every
+request rediscover the typo.
 
 ## Try it
 

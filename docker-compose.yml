@@ -1,0 +1,52 @@
+# Local dev stack: Postgres + Redis.
+#
+# Redis is here because without it the app is not running the code path it
+# runs in production. The `redis` package falls back to an in-process cache
+# when `JWC_REDIS_URL` is unset, silently — so `RateLimit` still *works*
+# locally, just per-process, and a rate-limit bug that only appears with
+# shared state never shows up on a laptop.
+#
+#   docker compose up -d
+#   export JWC_DATABASE_URL=postgres://jwc:jwc@localhost:5432/shortener
+#   export JWC_REDIS_URL=redis://localhost:6379
+#   jwc migrate up && jwc run
+#
+# The app itself is not a service here: `jwc run` / `jwc build --native`
+# against these two is the fast loop. Add it only if you want to exercise
+# the shipped image.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: jwc-shortener-pg
+    environment:
+      POSTGRES_USER: jwc
+      POSTGRES_PASSWORD: jwc
+      POSTGRES_DB: shortener
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jwc -d shortener"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: jwc-shortener-redis
+    ports:
+      - "6379:6379"
+    # `--appendonly no`: this holds rate-limit counters with a 60s window and
+    # nothing else. Persisting them across a restart buys nothing and costs
+    # fsyncs on every INCR.
+    command: ["redis-server", "--appendonly", "no", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
