@@ -3,6 +3,7 @@
   "type": "app",
   "version": "0.1.0",
   "dependencies": {
-    "qr-lite": "^0.3.0"
+    "qr-lite": "^0.3.0",
+    "jwc-redis": "^0.1.0"
   }
 }
