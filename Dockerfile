@@ -12,7 +12,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
-ARG JWC_VERSION=0.6.3
+# Must be a release that ships `log_insert` — MetricsTracker's `after { }`
+# block calls it, and no earlier compiler knows the built-in. 0.9.2 is also
+# the first release where `pattern(...)` is enforced under `--native`, which
+# is what stops this service handing out short links for `javascript:` URLs.
+ARG JWC_VERSION=0.9.2
 RUN curl -fsSL https://github.com/Nodirbek-Abdulaxadov/jwc-lang/releases/download/v${JWC_VERSION}/jwc-v${JWC_VERSION}-x86_64-linux.tar.gz \
         | tar -xz -C /usr/local/bin \
     && chmod +x /usr/local/bin/jwc \

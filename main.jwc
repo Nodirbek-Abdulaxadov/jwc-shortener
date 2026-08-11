@@ -10,16 +10,11 @@
 //   views.jwc  — HTML / OpenAPI bodies (kept here so this file stays readable)
 //
 // Caveats:
-//   - `latency_ms` is always 0 — middleware can't observe response duration
-//     yet. p50/p95/p99 in /stats are therefore returned as 0.
-//   - Rate limit is per-process (in-process cache, 60s window). Single replica
-//     only — behind multiple pods use a shared Redis cache.
-//   - Metrics rows are written inline by MetricsTracker — the native AOT
-//     build doesn't drive the Postgres job queue (interpreter-only), so the
-//     background-worker plan doesn't compile under `jwc build --native`.
 //   - Redirect bumps hits + resolves the url in one round-trip via a
 //     data-modifying CTE (`WITH … UPDATE … RETURNING … SELECT`). See the
 //     route for why the query-layer `update … set` form can't be used here.
+
+import redis;
 
 errorHandler (e) {
     return internalError(e.message);
@@ -49,7 +44,18 @@ entity ApiCall of AppDb {
 // spoofed value before injecting its own), then `X-Forwarded-For` as a whole
 // string (rate-limit only needs a stable bucket key — the comma-separated
 // chain still hashes to the same row for the same client), then "unknown".
-function client_ip() {
+// Named `rate_limit_bucket`, not `client_ip`: a built-in of that name exists
+// and shadows a user function in the dispatch order, so the version below
+// was dead code and every request was bucketed by the built-in's
+// `x-forwarded-for` reading instead of the Cloudflare-first order described
+// here. W005 was warning about exactly this.
+//
+// The built-in is the better primitive where it fits — it walks XFF
+// right-to-left and honours JWC_TRUSTED_PROXIES, which this does not. Worth
+// switching to (`JWC_REAL_IP_HEADER=cf-connecting-ip`) once trusted-proxy
+// ranges are configured; until then this keeps the behaviour the comment
+// has always claimed.
+function rate_limit_bucket() {
     let ip = header("cf-connecting-ip");
     if (ip == null) {
         ip = header("x-forwarded-for");
@@ -62,74 +68,63 @@ function client_ip() {
 
 // -------------------- middleware --------------------
 
+// 60 requests per rolling 60s window, keyed by client IP.
+//
+// `redis.rate_limit` runs INCR + EXPIRE as one atomic Lua script, which the
+// hand-rolled read-modify-write below it used to get wrong in two ways: two
+// concurrent requests could both read the same count and both write count+1,
+// and the window was per-process, so N replicas meant an effective limit of
+// 60 x N.
+//
+// With no `JWC_REDIS_URL` the package falls back to the in-process cache —
+// same behaviour this middleware had before, so a single-replica or local
+// run needs no Redis. `redis.available()` is what distinguishes the two at
+// runtime; it is not branched on here because a shortener over its rate
+// limit is a nuisance, not a correctness problem, and failing closed when
+// Redis is down would be the worse outcome.
 middleware RateLimit {
-    let key = "rl:" + client_ip();
-    let count = cache_get(key);
-    if (count == null) {
-        cache_set(key, "1", 60);
-    } else {
-        let n = int(count) + 1;
-        if (n >= 60) {
-            return { status: 429, error: "rate limited" };
-        }
-        cache_set(key, "" + n, 60);
+    if (!redis.rate_limit("rl:" + rate_limit_bucket(), 60, 60)) {
+        return { status: 429, error: "rate limited" };
     }
 }
 
+// Everything runs in the `after` block, for two reasons.
+//
+// Correctness: a request-phase middleware cannot see the response, which is
+// why `status` used to be hardcoded 200 (even for 404s and 500s) and
+// `latency_ms` hardcoded 0 — making every percentile in /stats a zero.
+// `response_status()` and `response_duration_ms()` are only meaningful here.
+//
+// Latency: `log_insert` hands the row to the runtime's buffered writer,
+// which batches a few hundred rows into one multi-row INSERT on a background
+// task. The previous version called `insert` inline from the *request*
+// phase, so every request paid a full database round-trip before its handler
+// even started. That is also what the "native AOT can't drive the job queue"
+// note used to be about — the buffered writer lives in the runtime and works
+// identically under `jwc run` and `jwc build --native`, so the workaround is
+// no longer needed.
+//
+// Rows are dropped rather than queued without bound if the writer falls
+// behind; `jwc_log_dropped_total` in /metrics counts them. For traffic
+// telemetry that is the right trade — see `log_writer.rs` in jwc-lang.
 middleware MetricsTracker {
+}
+after {
     // `request_path` + `request_method` are JWC 0.3.11+ builtins that
-    // expose the live request line. Before that we had to read fake
-    // `x-jwc-path` headers — they never existed, so every row landed
-    // as path="unknown".
+    // expose the live request line. Request context stays live through the
+    // after-phase, so both still read the route that just ran.
     let p = request_path();
     if (p == null) { p = "unknown"; }
     let m = request_method();
     if (m == null) { m = "GET"; }
-    try {
-        // Inline the INSERT: the native jwc compiler doesn't ship enqueue /
-        // register_job_handler yet, so the original off-load-to-background
-        // plan doesn't compile. Synchronous write keeps the request to one
-        // extra round-trip — fine at our traffic level. Wrapped in try so a
-        // metrics failure never breaks the request.
-        let payload = "{\"path\":" + json_escape(p)
-                    + ",\"method\":" + json_escape(m) + "}";
-        metrics_writer(payload);
-    } catch (e) {
-        // Swallow — metrics must never break the request.
-    }
-}
 
-// -------------------- background jobs --------------------
-
-// Writes one row into api_call. Payload arrives as a JSON string — same
-// contract as every other queue handler. Failures here are intentionally
-// silent: the queue retries until the DLQ kicks in.
-function metrics_writer(payload) {
-    let data = json_parse(payload);
     let row = new ApiCall();
-    row.path       = data.path;
-    row.method     = data.method;
-    row.status     = 200;
-    row.latency_ms = 0;
+    row.path       = p;
+    row.method     = m;
+    row.status     = response_status();
+    row.latency_ms = response_duration_ms();
     row.ts         = now();
-    insert row into AppDb.ApiCall;
-}
-
-// JSON-string-escape helper (subset enough for path/method, which can't contain
-// control characters in practice but may contain `"` or `\`).
-function json_escape(s) {
-    let out = "\"";
-    for ch in split(s, "") {
-        if (ch == "") { continue; }
-        if (ch == "\"") {
-            out = out + "\\\"";
-        } else if (ch == "\\") {
-            out = out + "\\\\";
-        } else {
-            out = out + ch;
-        }
-    }
-    return out + "\"";
+    log_insert("ApiCall", row);
 }
 
 // -------------------- routes --------------------
@@ -327,10 +322,9 @@ function main() {
     // jwc-shortener-secret. Without this every DB-touching route 500s.
     setConnectionString();
 
-    // (register_job_handler removed — the native compiler doesn't ship
-    // background-queue primitives yet. MetricsTracker calls metrics_writer
-    // inline; once jwc-lang adds enqueue/register_job_handler we'll move
-    // it back to async.)
+    // No job-handler registration: MetricsTracker's `log_insert` goes to the
+    // runtime's buffered writer, which owns its own background task and
+    // needs no wiring here. JWC_LOG_BATCH / JWC_LOG_FLUSH_MS tune it.
 
     serve(8080);
 }
