@@ -222,8 +222,9 @@ function is_forbidden_host(h: string): bool {
 // -------------------- read path --------------------
 
 // Load a link from Postgres, folded to what the redirect needs:
-// "" = no such code; else JSON {st: ok|blocked|gone, u: url, e: expiry unix}.
-function load_link(code: string): string {
+// null/"" = no such code; else JSON {st: ok|blocked|gone, u: url, e: expiry
+// unix}. No return annotation: raw_sql hands an empty result back as null.
+function load_link(code: string) {
     return raw_sql(
         "SELECT COALESCE((SELECT json_build_object("
         + "'st', CASE WHEN deleted_at IS NOT NULL THEN 'gone' "
