@@ -1,85 +1,98 @@
 # jwc-shortener
 
-A real production app written in [JWC](https://github.com/Nodirbek-Abdulaxadov/jwc-lang) — minimal URL shortener.
-
-Live: <https://1kb.uz/>
+URL shortener written in [JWC](https://github.com/Nodirbek-Abdulaxadov/jwc-lang) — v2, a
+clean-slate rewrite around a read-heavy (≈100:1) design: one server, Postgres + Redis,
+native binary.
 
 ## Endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| `GET`  | `/healthz` | `{"status":"ok"}` — Kubernetes liveness/readiness probe |
-| `POST` | `/api/links` | `{"url":"..."}` → `{code, short}` |
-| `GET`  | `/:code` | 302 redirect to the original URL (increments `hits`) |
-| `GET`  | `/api/links/:code` | `{code, url, hits, created_at}` |
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/links` | Bearer | `{url, expires_at?}` → `201 {code, short, qr}` |
+| `GET` | `/{code}` | — | 302 redirect (404 unknown/blocked, 410 deleted/expired) |
+| `GET` | `/api/links/{code}` | — | `{code, url, hits, created_at}` |
+| `GET` | `/api/me/links` | Bearer | own links, newest first |
+| `DELETE` | `/api/me/links/{code}` | Bearer | soft delete |
+| `GET` | `/healthz` `/readyz` `/metrics` | — | runtime built-ins |
 
-## Local dev
+Auth is OIDC: access tokens issued by the IdP (musanna-platform / OpenIddict),
+verified against its JWKS (`jwt_verify_jwks`, RS256).
+
+## How it works
+
+- **Codes** — `base62((nextval * ODD mod 2^32) xor XOR)`, computed by the
+  `next_code()` SQL function inside the INSERT. Bijective: no collisions, no
+  retry loop, sequence not observable. Constants live in the init migration
+  and must never change. Capacity 2^32-1, always 6 chars.
+- **Redirect** — one Redis round-trip: a Lua script reads the cache entry,
+  bumps `hits:{floor(now/10)}`, and claims the closed-bucket flush range.
+  Misses load from Postgres and cache for ≤300s; unknown codes are
+  negative-cached 60s (code-enumeration scans must not reach Postgres).
+- **Hit flush** — no background scheduler exists in a native JWC binary, so
+  the redirect that first observes a bucket rollover drains the closed
+  buckets into `link.hits` + `link_stat_daily` (one request per ~10s pays a
+  few extra round-trips). Worst case on crash: ~10s of hits, same class as
+  Redis AOF `everysec`.
+- **Redirects are not logged per-request** — the counter is the analytics
+  source.
+- **Degradation** — no/broken Redis: in-process cache + per-request Postgres
+  hits bump. Postgres down: cached redirects keep working.
+
+## Local dev (no Docker)
+
+Needs: local Postgres, `jwc` 0.9.4+, optionally Redis, and the IdP
+(musanna-platform) running locally for authed endpoints.
 
 ```bash
-# 1. Postgres + Redis
-docker compose up -d
-
-# 2. Env
+# Env
 export JWC_DATABASE_URL=postgres://jwc:jwc@localhost:5432/shortener
-export JWC_REDIS_URL=redis://localhost:6379
 export PUBLIC_BASE_URL=http://localhost:8080
+export JWKS_URL=https://localhost:7443/.well-known/jwks   # musanna dev host
+# optional:
+# export JWC_REDIS_URL=redis://localhost:6379
+# export JWC_JWT_EXPECTED_ISS=https://localhost:7443/
+# export JWC_JWT_EXPECTED_AUD=jwc-shortener
+# export DAILY_QUOTA=100 MONTHLY_QUOTA=1000 CREATE_RATE_LIMIT=10
 
-# 3. Migrate + run
 jwc migrate up
 jwc run
-# → server on :8080
 ```
 
-Requires **jwc 0.9.2+** — `MetricsTracker` calls `log_insert`, which earlier
-compilers do not know.
+> The init migration drops the v1 tables (`link`, `api_call`) — v2 is a fresh
+> start. On a database that ran v1 migrations, easiest is a fresh database.
 
-### Why `JWC_REDIS_URL` matters
-
-Leave it unset and everything still runs: the `redis` package falls back to
-an in-process cache. That fallback is deliberate — a laptop should not need
-Redis — but it is **not** the production code path, and the difference is
-invisible until it bites:
-
-| | with `JWC_REDIS_URL` | without |
-|---|---|---|
-| `RateLimit` window | shared across replicas | per process — effective limit is `60 × replicas` |
-| `INCR` + `EXPIRE` | one atomic Lua script | two calls, so two concurrent requests can both read the same count |
-
-`/metrics` tells you which one you are on: `jwc_redis_pool_*` series appear
-only when Redis is actually configured.
-
-Set it in the cluster the same way `JWC_DATABASE_URL` is set — the app reads
-it at boot and fails fast on a malformed URL rather than letting every
-request rediscover the typo.
+Without `JWC_REDIS_URL` everything still runs: caching falls back in-process
+and hit counting goes straight to Postgres. That is the dev path, not the
+production one — `redis.available()` and the `jwc_redis_pool_*` metrics tell
+you which you're on.
 
 ## Try it
 
 ```bash
-curl -X POST http://localhost:8080/api/links \
-    -H 'content-type: application/json' \
-    -d '{"url":"https://example.com/very/long/path?with=many&query=params"}'
-# → {"code":"a3f9c2d","short":"http://localhost:8080/a3f9c2d"}
+TOKEN=... # access token from the IdP
 
-curl -I http://localhost:8080/a3f9c2d
+curl -X POST http://localhost:8080/api/links \
+    -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"url":"https://example.com/very/long/path"}'
+# → {"code":"4fRw2Z","short":"localhost:8080/4fRw2Z","qr":"<img .../>"}
+
+curl -I http://localhost:8080/4fRw2Z
 # → HTTP/1.1 302 Found
-# → Location: https://example.com/very/long/path?with=many&query=params
+# → Location: https://example.com/very/long/path
 ```
+
+## Redis keys
+
+| Key | Meaning | TTL |
+|---|---|---|
+| `link:{code}` | redirect cache: `{u,e}` / `__404__` / `__410__` | ≤300s / 60s |
+| `hits:{bucket}` | hash of hit deltas per 10s bucket | 1h |
+| `hits:cursor` | last flushed bucket (flush claim marker) | — |
+| `rl:user:{sub}` | create rate limit | 60s |
+| `quota:d:{sub}:{day}` / `quota:m:{sub}:{month}` | quotas | 48h / 36d |
 
 ## Stack
 
-- **JWC** for the entire application (1 file, ~90 LoC).
-- **Postgres** for storage (shared cluster postgres).
-- **Docker** multi-stage: rust+jwc builder, debian-slim runtime (~80 MB image).
-- **Kubernetes** + ArgoCD via the GitOps repo.
-- **Cloudflare** edge + Let's Encrypt cert via cluster cert-manager.
-
-## Local package prototype: `qr-lite`
-
-This repo now includes a local JWC package prototype at `qr-lite/` so you can
-try QR-style SVG generation before moving it into a separate repository.
-
-- Manifest: `qr-lite/qr-lite.jwcproj` (`type: "pkg"`, `pkgVersion: "0.1.0"`).
-- Exported function: `qr_svg(text: string): string`.
-- Output: deterministic QR-like SVG for local UI/API flow testing.
-- App integration (no publish): `jwc-shortener.jwcproj` depends on `./qr-lite`
-  via local `path` source, and `POST /api/links` now returns `qr_svg`.
+- **JWC** for the whole app (`main.jwc`), `redis` + `qr-lite` packages.
+- **Postgres** for storage; `migrations/` applied with `jwc migrate up`.
+- **Docker** multi-stage native build (`jwc build --native`), Kubernetes via `deploy/`.

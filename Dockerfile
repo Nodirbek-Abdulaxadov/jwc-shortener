@@ -51,7 +51,6 @@ COPY --from=builder /usr/local/bin/jwc /usr/local/bin/jwc
 COPY --from=builder /app/migrations /app/migrations
 COPY --from=builder /app/jwc-shortener.jwcproj /app/jwc-shortener.jwcproj
 COPY --from=builder /app/main.jwc /app/main.jwc
-COPY --from=builder /app/views.jwc /app/views.jwc
 EXPOSE 8080
 ENV RUST_LOG=info
 HEALTHCHECK --interval=30s --timeout=3s \

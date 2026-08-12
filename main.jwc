@@ -1,18 +1,33 @@
-// jwc-shortener — URL shortener + landing page at https://1kb.uz.
+// jwc-shortener v2 — URL shortener, system-design rewrite.
 //
-// One JWC program serves three things:
-//   1. The landing page at `/`        — see `landing_html()` in views.jwc
-//   2. The shortener API + redirects  — POST /api/links, GET /:code, ...
-//   3. Traffic stats + Swagger UI     — /api/v1/stats, /docs, /openapi.json
+// Read path (~99% of traffic):
+//   GET /{code} → ONE Redis round-trip (Lua: cache GET + HINCRBY hit bucket
+//   + flush-cursor claim) → 302. A cache miss loads from Postgres and caches
+//   the entry for up to 300s. Unknown codes are negative-cached ("__404__",
+//   60s): a public shortener eats permanent code-enumeration scans, and
+//   without the negative entry every probe would hit Postgres.
 //
-// File layout:
-//   main.jwc   — entities, middleware, routes, main() (this file)
-//   views.jwc  — HTML / OpenAPI bodies (kept here so this file stays readable)
+// Hit counting:
+//   Every redirect does HINCRBY hits:{floor(now/10)} <code> 1. The bucket
+//   that just closed is drained back to Postgres by whichever redirect first
+//   observes the rollover — there is no background scheduler in a native JWC
+//   binary (the queue API is interp-only), so the flusher piggybacks on
+//   traffic: the Lua script atomically claims the closed range via
+//   "hits:cursor", and only the claiming request pays the drain. Buckets
+//   carry a 1h TTL, so an idle gap loses nothing.
 //
-// Caveats:
-//   - Redirect bumps hits + resolves the url in one round-trip via a
-//     data-modifying CTE (`WITH … UPDATE … RETURNING … SELECT`). See the
-//     route for why the query-layer `update … set` form can't be used here.
+// Redirects are deliberately NOT logged per-request — at 100:1 read:write a
+// per-hit log row would bottleneck the single server. The counter IS the
+// analytics source (link.hits + link_stat_daily).
+//
+// Status codes: missing and blocked both answer an identical 404 (no oracle);
+// owner-deleted and expired answer 410.
+//
+// Degradation:
+//   - No JWC_REDIS_URL (local dev): the redis package falls back to the
+//     in-process cache; hits are bumped directly in Postgres per redirect.
+//   - Redis configured but down: RedisError → same per-request PG fallback.
+//   - Postgres down: cached redirects keep working; the rest 5xx.
 
 import redis;
 
@@ -23,275 +38,441 @@ errorHandler (e) {
 dbcontext AppDb : Postgres;
 
 entity Link of AppDb {
-    code       varchar(8) pk;    // 7-char slug used in the short URL
-    url        varchar(2048);    // original URL
-    hits       int;              // click counter
+    code       varchar(8) pk;        // base62(permute(nextval)), always 6 chars
+    url        varchar(2048);        // immutable after create
+    dest_host  varchar(255) index;   // extracted host — abuse/takedown queries
+    owner_sub  varchar(255);         // IdP subject; composite index in migration
+    status     varchar(16);          // active | blocked
+    hits       bigint;               // flushed from Redis buckets
+    created_at datetime;
+    expires_at datetime nullable;
+    deleted_at datetime nullable;    // soft delete
+}
+
+entity AppUser of AppDb {
+    sub        varchar(255) pk;
+    email      varchar(320) nullable;
+    status     varchar(16);
     created_at datetime;
 }
 
-entity ApiCall of AppDb {
-    id         bigint pk autoincrement;
-    path       varchar(200);
-    method     varchar(8);
-    status     int;
-    latency_ms int;
-    // Microseconds. `latency_ms` is whole milliseconds and this service
-    // answers `GET /` in well under one, so across 1.48M logged requests it
-    // recorded min 0, max 1, mean 0.00 — measured, and useless for a
-    // percentile. Kept alongside rather than replaced so a deploy can land
-    // before or after the migration in either order.
-    latency_us int;
-    ts         datetime;
+entity BlockedHost of AppDb {
+    host varchar(255) pk;
 }
+
+// link_stat_daily has a composite PK (code, day) which entities can't declare
+// yet — it lives in the migration and is only touched via raw_sql.
+
+// -------------------- constants --------------------
+
+const CACHE_TTL_SECS = 300;
+const NEG_TTL_SECS   = 60;
+
+// One round-trip for the hot path. KEYS = [link:{code}, hits:{bucket},
+// hits:cursor], ARGV = [code, bucket]. Returns a JSON object so three answers
+// cross in one reply: v ("" = miss, "__404__"/"__410__" = negative entry,
+// else the cached JSON), and [from..to] — the closed-bucket range THIS request
+// atomically claimed for flushing (from = -1 for everyone else). A missing
+// cursor is initialised without claiming: nothing was counted before it.
+const HIT_SCRIPT =
+    "local v = redis.call('GET', KEYS[1]) " +
+    "if v and v ~= '__404__' and v ~= '__410__' then " +
+    "redis.call('HINCRBY', KEYS[2], ARGV[1], 1) " +
+    "redis.call('EXPIRE', KEYS[2], 3600) end " +
+    "local target = tonumber(ARGV[2]) - 1 " +
+    "local from = -1 " +
+    "local c = tonumber(redis.call('GET', KEYS[3])) " +
+    "if not c then redis.call('SET', KEYS[3], target) " +
+    "elseif c < target then redis.call('SET', KEYS[3], target) from = c + 1 end " +
+    "if v == false then v = '' end " +
+    "return cjson.encode({v = v, from = from, to = target})";
+
+// Count a hit for the cache-miss path (the entry was just loaded from PG).
+const COUNT_SCRIPT =
+    "redis.call('HINCRBY', KEYS[1], ARGV[1], 1) " +
+    "redis.call('EXPIRE', KEYS[1], 3600) return ''";
+
+// Drain one bucket atomically: HGETALL + DEL in one script, so a delta can
+// never be read twice. Late writers racing the drain recreate the bucket
+// with their delta only — the next cycle's catch-up pass picks it up.
+const DRAIN_SCRIPT =
+    "local h = redis.call('HGETALL', KEYS[1]) " +
+    "redis.call('DEL', KEYS[1]) " +
+    "return cjson.encode(h)";
 
 // -------------------- helpers --------------------
 
-// Client IP source order: Cloudflare-injected header first (CF strips any
-// spoofed value before injecting its own), then `X-Forwarded-For` as a whole
-// string (rate-limit only needs a stable bucket key — the comma-separated
-// chain still hashes to the same row for the same client), then "unknown".
-// Named `rate_limit_bucket`, not `client_ip`: a built-in of that name exists
-// and shadows a user function in the dispatch order, so the version below
-// was dead code and every request was bucketed by the built-in's
-// `x-forwarded-for` reading instead of the Cloudflare-first order described
-// here. W005 was warning about exactly this.
-//
-// The built-in is the better primitive where it fits — it walks XFF
-// right-to-left and honours JWC_TRUSTED_PROXIES, which this does not. Worth
-// switching to (`JWC_REAL_IP_HEADER=cf-connecting-ip`) once trusted-proxy
-// ranges are configured; until then this keeps the behaviour the comment
-// has always claimed.
-function rate_limit_bucket() {
-    let ip = header("cf-connecting-ip");
-    if (ip == null) {
-        ip = header("x-forwarded-for");
+function base_url(): string {
+    return env("PUBLIC_BASE_URL") ?? "http://localhost:8080";
+}
+
+function int_env(name: string, fallback: int): int {
+    let v = env(name);
+    if (v == null or v == "") { return fallback; }
+    return int(v);
+}
+
+function link_cache_key(code: string): string {
+    return "link:" + code;
+}
+
+// Best-effort cache ops: when Redis is configured but unreachable these
+// raise RedisError, and a cache problem must never fail a request that
+// Postgres can still answer. Unconfigured Redis needs no guard — the
+// package already falls back to the in-process cache.
+function cache_read(key: string) {
+    try {
+        return redis.get(key);
+    } catch (e: RedisError) {
+        return null;
     }
-    if (ip == null or ip == "") {
-        ip = "unknown";
+}
+
+function cache_put(key: string, value: string, ttl_secs: int) {
+    try {
+        redis.set(key, value, ttl_secs);
+    } catch (e: RedisError) {
+        // best-effort
     }
-    return ip;
+}
+
+// Rate limit / quota that fails OPEN when Redis is configured but dead:
+// blocking all creates because the limiter store is down is the worse
+// outcome. Unconfigured Redis falls back to the in-process limiter.
+function allow(key: string, limit: int, window_secs: int): bool {
+    try {
+        return redis.rate_limit(key, limit, window_secs);
+    } catch (e: RedisError) {
+        return true;
+    }
+}
+
+// Cache TTL for a live entry: min(300s, expires_at - now).
+function entry_ttl(exp_unix: int): int {
+    if (exp_unix <= 0) { return CACHE_TTL_SECS; }
+    let left = exp_unix - unix_timestamp();
+    if (left < 1) { return 1; }
+    if (left > CACHE_TTL_SECS) { return CACHE_TTL_SECS; }
+    return left;
+}
+
+// Host portion of an http(s) URL, lowercased, port stripped, userinfo
+// handled ("https://user@evil.com/x" → "evil.com"). Returns "" when the
+// URL has no recognisable authority.
+function extract_host(url: string): string {
+    let rest = "";
+    if (starts_with(url, "https://")) {
+        rest = substring(url, 8, length(url) - 8);
+    } else if (starts_with(url, "http://")) {
+        rest = substring(url, 7, length(url) - 7);
+    } else {
+        return "";
+    }
+    let authority = "";
+    for ch in split(rest, "") {
+        if (ch == "") { continue; }
+        if (ch == "/" or ch == "?" or ch == "#") { break; }
+        authority = authority + ch;
+    }
+    // userinfo: the real host follows the LAST "@"
+    let host = authority;
+    if (contains(authority, "@")) {
+        host = "";
+        for part in split(authority, "@") {
+            if (part != "") { host = part; }
+        }
+    }
+    let hostname = "";
+    for c in split(host, "") {
+        if (c == "") { continue; }
+        if (c == ":") { break; }
+        hostname = hostname + c;
+    }
+    return lower(hostname);
+}
+
+// Literal private/loopback targets and self-redirect loops. This checks the
+// URL as written — it does not resolve DNS, so a hostname that resolves to a
+// private address (DNS rebinding) is out of scope for a shortener: the
+// redirect is followed by the visitor's browser, not by this server.
+function is_forbidden_host(h: string): bool {
+    if (h == "" or h == "localhost") { return true; }
+    if (starts_with(h, "[")) { return true; }   // IPv6 literal — reject wholesale
+    if (starts_with(h, "127.") or starts_with(h, "10.")
+        or starts_with(h, "192.168.") or starts_with(h, "169.254.")
+        or starts_with(h, "0.")) { return true; }
+    if (starts_with(h, "172.")) {
+        // 172.16.0.0/12 — second octet 16..31
+        let idx = 0;
+        for p in split(h, ".") {
+            if (p == "") { continue; }
+            idx = idx + 1;
+            if (idx == 2) {
+                let octet = -1;
+                try { octet = int(p); } catch (e) { octet = -1; }
+                if (octet >= 16 and octet <= 31) { return true; }
+                break;
+            }
+        }
+    }
+    if (h == extract_host(base_url())) { return true; }   // redirect loop
+    return false;
+}
+
+// -------------------- read path --------------------
+
+// Load a link from Postgres, folded to what the redirect needs:
+// "" = no such code; else JSON {st: ok|blocked|gone, u: url, e: expiry unix}.
+function load_link(code: string): string {
+    return raw_sql(
+        "SELECT COALESCE((SELECT json_build_object("
+        + "'st', CASE WHEN deleted_at IS NOT NULL THEN 'gone' "
+        +            "WHEN status <> 'active' THEN 'blocked' "
+        +            "WHEN expires_at IS NOT NULL AND expires_at <= now() THEN 'gone' "
+        +            "ELSE 'ok' END, "
+        + "'u', url, "
+        + "'e', COALESCE(EXTRACT(EPOCH FROM expires_at)::bigint, 0))::text "
+        + "FROM \"link\" WHERE code = $1), '')",
+        json_stringify([code]));
+}
+
+// Direct Postgres hit bump for degraded mode (no usable Redis): one CTE
+// keeps link.hits and the daily stat in a single round-trip.
+function count_hit_pg(code: string) {
+    raw_sql(
+        "WITH b AS (UPDATE \"link\" SET hits = hits + 1 WHERE code = $1 RETURNING code) "
+        + "INSERT INTO \"link_stat_daily\" (code, day, hits) SELECT code, CURRENT_DATE, 1 FROM b "
+        + "ON CONFLICT (code, day) DO UPDATE SET hits = link_stat_daily.hits + 1",
+        json_stringify([code]));
+}
+
+// Cache-miss tail shared by both modes. bucket >= 0 → count via the Redis
+// bucket; bucket < 0 → count straight into Postgres.
+function serve_from_db(code: string, bucket: int) {
+    let found = load_link(code);
+    if (found == null or found == "") {
+        cache_put(link_cache_key(code), "__404__", NEG_TTL_SECS);
+        return notFound({ error: "not found" });
+    }
+    let row = json_parse(found);
+    if (row.st == "blocked") {
+        // Identical body and cache TTL as "missing" — no blocked-oracle.
+        cache_put(link_cache_key(code), "__404__", NEG_TTL_SECS);
+        return notFound({ error: "not found" });
+    }
+    if (row.st == "gone") {
+        cache_put(link_cache_key(code), "__410__", NEG_TTL_SECS);
+        return statusCode(410, { error: "gone" });
+    }
+    cache_put(link_cache_key(code), json_stringify({ u: row.u, e: row.e }), entry_ttl(row.e));
+    if (bucket >= 0) {
+        try {
+            redis_eval(COUNT_SCRIPT, json_stringify(["hits:" + bucket]), json_stringify([code]));
+        } catch (e: RedisError) {
+            count_hit_pg(code);
+        }
+    } else {
+        count_hit_pg(code);
+    }
+    return statusCode(302, { Location: row.u });
+}
+
+// Drain claimed buckets into Postgres. Only ever runs on the one request
+// that won the cursor claim, so ~one request per 10s pays a few extra
+// round-trips. The cursor is already advanced: a bucket that fails here is
+// lost — same durability class the design accepts for AOF everysec.
+function flush_range(from: int, to: int) {
+    let b = from;
+    if (to - b > 30) { b = to - 30; }   // older buckets are past TTL anyway
+    while (b <= to) {
+        try {
+            flush_bucket(b);
+        } catch (e) {
+            // skip — next rollover retries anything a late writer recreated
+        }
+        b = b + 1;
+    }
+}
+
+function flush_bucket(bucket: int) {
+    let raw = redis_eval(DRAIN_SCRIPT, json_stringify(["hits:" + bucket]), json_stringify([]));
+    if (raw == null or raw == "" or raw == "{}" or raw == "[]") { return; }
+    // HGETALL comes back as a flat [field, value, field, value, ...] array;
+    // fold it into two Postgres array literals (codes are base62 — no quoting).
+    let flat = json_parse(raw);
+    let codes = "";
+    let deltas = "";
+    let field = "";
+    let is_field = true;
+    for item in flat {
+        if (is_field) {
+            field = item;
+            is_field = false;
+        } else {
+            if (codes != "") {
+                codes = codes + ",";
+                deltas = deltas + ",";
+            }
+            codes = codes + field;
+            deltas = deltas + item;
+            is_field = true;
+        }
+    }
+    if (codes == "") { return; }
+    let params = json_stringify(["{" + codes + "}", "{" + deltas + "}"]);
+    raw_sql(
+        "UPDATE \"link\" SET hits = link.hits + v.d "
+        + "FROM (SELECT unnest($1::text[]) AS code, unnest($2::bigint[]) AS d) v "
+        + "WHERE link.code = v.code",
+        params);
+    raw_sql(
+        "INSERT INTO \"link_stat_daily\" (code, day, hits) "
+        + "SELECT v.code, CURRENT_DATE, v.d "
+        + "FROM (SELECT unnest($1::text[]) AS code, unnest($2::bigint[]) AS d) v "
+        + "ON CONFLICT (code, day) DO UPDATE SET hits = link_stat_daily.hits + EXCLUDED.hits",
+        params);
+}
+
+function redirect_via_redis(code: string) {
+    let bucket = int(unix_timestamp() / 10);
+    let reply = redis_eval(HIT_SCRIPT,
+        json_stringify([link_cache_key(code), "hits:" + bucket, "hits:cursor"]),
+        json_stringify([code, bucket]));
+    let r = json_parse(reply);
+    if (r.from >= 0) { flush_range(r.from, r.to); }
+    if (r.v == "") { return serve_from_db(code, bucket); }
+    if (r.v == "__404__") { return notFound({ error: "not found" }); }
+    if (r.v == "__410__") { return statusCode(410, { error: "gone" }); }
+    let entry = json_parse(r.v);
+    if (entry.e > 0 and entry.e <= unix_timestamp()) {
+        // Expired while cached. The Lua HINCRBY above already counted this
+        // request — one stray hit at the expiry boundary is accepted.
+        cache_put(link_cache_key(code), "__410__", NEG_TTL_SECS);
+        return statusCode(410, { error: "gone" });
+    }
+    return statusCode(302, { Location: entry.u });
+}
+
+function redirect_via_pg(code: string) {
+    let cached = cache_read(link_cache_key(code));
+    if (cached == "__404__") { return notFound({ error: "not found" }); }
+    if (cached == "__410__") { return statusCode(410, { error: "gone" }); }
+    if (cached != null) {
+        let entry = json_parse(cached);
+        if (entry.e > 0 and entry.e <= unix_timestamp()) {
+            cache_put(link_cache_key(code), "__410__", NEG_TTL_SECS);
+            return statusCode(410, { error: "gone" });
+        }
+        count_hit_pg(code);
+        return statusCode(302, { Location: entry.u });
+    }
+    return serve_from_db(code, -1);
 }
 
 // -------------------- middleware --------------------
 
-// 60 requests per rolling 60s window, keyed by client IP.
-//
-// `redis.rate_limit` runs INCR + EXPIRE as one atomic Lua script, which the
-// hand-rolled read-modify-write below it used to get wrong in two ways: two
-// concurrent requests could both read the same count and both write count+1,
-// and the window was per-process, so N replicas meant an effective limit of
-// 60 x N.
-//
-// With no `JWC_REDIS_URL` the package falls back to the in-process cache —
-// same behaviour this middleware had before, so a single-replica or local
-// run needs no Redis. `redis.available()` is what distinguishes the two at
-// runtime; it is not branched on here because a shortener over its rate
-// limit is a nuisance, not a correctness problem, and failing closed when
-// Redis is down would be the worse outcome.
-middleware RateLimit {
-    if (!redis.rate_limit("rl:" + rate_limit_bucket(), 60, 60)) {
-        // `statusCode`, not a bare `{ status: 429 }`: a plain object is a
-        // response *body*, so the key named `status` is just data and the
-        // request came back 200 with a 429-shaped payload. A benchmark
-        // blocked 92,675 requests and every one of them was a 2xx.
-        return statusCode(429, { error: "rate limited" });
+// OIDC bearer auth against the IdP's JWKS (RS256). iss/aud/leeway are
+// enforced by the runtime via JWC_JWT_EXPECTED_ISS / _AUD / _LEEWAY_SECS.
+middleware Auth {
+    let raw = header("authorization");
+    if (raw == null or raw == "") {
+        return unauthorized({ error: "missing bearer token" });
     }
-}
-
-// Everything runs in the `after` block, for two reasons.
-//
-// Correctness: a request-phase middleware cannot see the response, which is
-// why `status` used to be hardcoded 200 (even for 404s and 500s) and
-// `latency_ms` hardcoded 0 — making every percentile in /stats a zero.
-// `response_status()` and `response_duration_ms()` are only meaningful here.
-//
-// Latency: `log_insert` hands the row to the runtime's buffered writer,
-// which batches a few hundred rows into one multi-row INSERT on a background
-// task. The previous version called `insert` inline from the *request*
-// phase, so every request paid a full database round-trip before its handler
-// even started. That is also what the "native AOT can't drive the job queue"
-// note used to be about — the buffered writer lives in the runtime and works
-// identically under `jwc run` and `jwc build --native`, so the workaround is
-// no longer needed.
-//
-// Rows are dropped rather than queued without bound if the writer falls
-// behind; `jwc_log_dropped_total` in /metrics counts them. For traffic
-// telemetry that is the right trade — see `log_writer.rs` in jwc-lang.
-middleware MetricsTracker {
-}
-after {
-    // `request_path` + `request_method` are JWC 0.3.11+ builtins that
-    // expose the live request line. Request context stays live through the
-    // after-phase, so both still read the route that just ran.
-    let p = request_path();
-    if (p == null) { p = "unknown"; }
-    let m = request_method();
-    if (m == null) { m = "GET"; }
-
-    let row = new ApiCall();
-    row.path       = p;
-    row.method     = m;
-    row.status     = response_status();
-    row.latency_ms = response_duration_ms();
-    row.latency_us = response_duration_us();
-    row.ts         = now();
-    log_insert("ApiCall", row);
+    let claims = null;
+    try {
+        claims = json_parse(await jwt_verify_jwks(raw, env("JWKS_URL")));
+    } catch (e) {
+        return unauthorized({ error: "invalid token" });
+    }
+    if (claims == null or claims.sub == null) {
+        return unauthorized({ error: "invalid token" });
+    }
+    setContext("sub", claims.sub);
+    setContext("email", claims.email ?? "");
 }
 
 // -------------------- routes --------------------
 
-// Liveness — process is up. K8s restarts the pod if this fails.
-route GET "healthz" {
-    return json({ status: "ok" });
-}
-
-// Readiness — pod is allowed to receive traffic. Fails if Postgres is
-// unreachable so the load balancer drains us until the DB recovers.
-route GET "readyz" {
-    try {
-        // Cheapest possible round-trip; uses the existing prepared-stmt cache.
-        let _ = raw_sql("SELECT 1", "[]");
-        return json({ status: "ready" });
-    } catch (e) {
-        // `statusCode`, not a bare object — the same trap the rate limiter
-        // was in, and worse here: a plain `{ status: 503 }` is a *body*, so
-        // an unreachable database answered `200 OK` and Kubernetes kept the
-        // pod in the load balancer. Readiness that cannot fail is not
-        // readiness.
-        return statusCode(503, { error: "db_unreachable", message: e.message });
-    }
-}
-
-// `html(...)` (JWC 0.3.6+) declares `text/html; charset=utf-8` so browsers
-// and strict clients both render the page instead of treating it as JSON.
-route GET "/" use MetricsTracker {
-    return html(landing_html());
-}
-
-route GET "docs" {
-    return html(landing_docs());
-}
-
-route GET "openapi.json" {
-    return openapi_spec();
-}
-
-// SEO / crawler endpoints. `og.svg` backs the OpenGraph / Twitter social
-// card referenced from the landing `<head>`.
-//
-// All three go through `response(body, mime)` rather than returning a bare
-// string. A bare string carries no content-type, so the runtime falls back
-// to `application/json` — right for `openapi.json` below, wrong for these:
-// a crawler reading `sitemap.xml` as JSON skips it, and a social card
-// served as JSON does not render.
-route GET "robots.txt" {
-    return response(robots_txt(), "text/plain");
-}
-
-route GET "sitemap.xml" {
-    return response(sitemap_xml(), "application/xml");
-}
-
-route GET "og.svg" {
-    return response(og_svg(), "image/svg+xml");
-}
-
-route GET "api/v1/stats" {
-    let total = select count(*) from AppDb.ApiCall;
-    let last_24h_raw = raw_sql(
-        "SELECT COUNT(*) FROM \"api_call\" WHERE ts > NOW() - INTERVAL '24 hours'",
-        "[]"
-    );
-    let last_24h = int(last_24h_raw);
-    let total_links = select count(*) from AppDb.Link;
-    let total_clicks_raw = raw_sql(
-        "SELECT COALESCE(SUM(hits), 0) FROM \"link\"",
-        "0"
-    );
-    let total_clicks = int(total_clicks_raw);
-    let top_link_hits_raw = raw_sql(
-        "SELECT COALESCE(MAX(hits), 0) FROM \"link\"",
-        "0"
-    );
-    let top_link_hits = int(top_link_hits_raw);
-    let top_raw = raw_sql(
-        "SELECT COALESCE(json_agg(t), '[]'::json)::text FROM (SELECT code, hits FROM \"link\" WHERE hits > 0 ORDER BY hits DESC LIMIT 5) t",
-        "[]"
-    );
+route GET "/" {
     return json({
-        total:         total,
-        last_24h:      last_24h,
-        total_links:   total_links,
-        total_clicks:  total_clicks,
-        top_link_hits: top_link_hits,
-        top_endpoints: top_raw,
-        written_in:    "JWC",
-        source:        "https://github.com/Nodirbek-Abdulaxadov/jwc-shortener"
+        service: "jwc-shortener",
+        create:  "POST /api/links {url, expires_at?} (Bearer)",
+        follow:  "GET /{code}",
+        info:    "GET /api/links/{code}",
+        mine:    "GET /api/me/links (Bearer)"
     });
 }
 
-route POST "api/links" use RateLimit, MetricsTracker {
+route POST "api/links" use Auth {
     validate body {
-        // Restrict to real web URLs — without this `data:` / `file:` /
-        // `javascript:` / arbitrary schemes get short-circuited too and the
-        // service becomes an open phishing / abuse relay.
-        url: required, minLength(8), maxLength(2048), pattern(r"^https?://");
+        url:        required, minLength(10), maxLength(2048), pattern(r"^https?://");
+        expires_at: maxLength(64);
     }
     let req = body();
+    let sub = context("sub");
 
-    // 7 hex chars = 268M slug space → birthday-collision is ~50% at ~16k links.
-    // Cheaper than 8 chars is "retry on PK conflict": try a fresh code up to
-    // 5 times, then bail loudly so abuse / pool exhaustion is visible.
-    let short_code = "";
-    let attempts = 0;
-    let inserted = false;
-    while (attempts < 5 and inserted == false) {
-        attempts = attempts + 1;
+    // Quota before validation (per design): a rejected create still burns it.
+    if (!allow("rl:user:" + sub, int_env("CREATE_RATE_LIMIT", 10), 60)) {
+        return statusCode(429, { error: "rate limited" });
+    }
+    let day = int(unix_timestamp() / 86400);
+    if (!allow("quota:d:" + sub + ":" + day, int_env("DAILY_QUOTA", 100), 172800)) {
+        return statusCode(429, { error: "daily quota exceeded" });
+    }
+    let month = int(unix_timestamp() / 2592000);
+    if (!allow("quota:m:" + sub + ":" + month, int_env("MONTHLY_QUOTA", 1000), 3110400)) {
+        return statusCode(429, { error: "monthly quota exceeded" });
+    }
 
-        // 7-char slug from a uuid (strip dashes + take first 7). `split(s, "")`
-        // returns leading + trailing empty entries — skip them.
-        let raw = lower(replace(uuid(), "-", ""));
-        short_code = "";
-        for ch in split(raw, "") {
-            if (length(short_code) >= 7) { break; }
-            if (ch != "") {
-                short_code = short_code + ch;
-            }
-        }
+    let host = extract_host(req.url);
+    if (is_forbidden_host(host)) {
+        return badRequest({ error: "url host not allowed" });
+    }
+    let blocked = select BlockedHost from AppDb.BlockedHost
+        where BlockedHost.host == @host first;
+    if (blocked != null) {
+        return badRequest({ error: "url host not allowed" });
+    }
 
+    // expires_at (optional): let Postgres judge the format, reject the past.
+    let exp = "" + (req.expires_at ?? "");
+    if (exp != "") {
+        let in_future = "f";
         try {
-            let row = new Link();
-            row.code = short_code;
-            row.url  = req.url;
-            row.hits = 0;
-            row.created_at = now();
-            insert row into AppDb.Link;
-            inserted = true;
+            in_future = raw_sql("SELECT ($1::timestamptz > now())::text", json_stringify([exp]));
         } catch (e) {
-            // Treat any insert error as a probable PK clash and retry.
-            // After 5 fresh codes failing back-to-back we re-throw.
-            if (attempts >= 5) {
-                return internalError("could not allocate short code");
-            }
+            return badRequest({ error: "expires_at: invalid timestamp" });
+        }
+        if (in_future != "t") {
+            return badRequest({ error: "expires_at must be in the future" });
         }
     }
 
-    let short_url_full = env("PUBLIC_BASE_URL") + "/" + short_code;
-    let short_url = replace(short_url_full, "https://", "");
-    short_url = replace(short_url, "http://", "");
+    raw_sql(
+        "INSERT INTO \"app_user\" (sub, email, status, created_at) "
+        + "VALUES ($1, NULLIF($2,''), 'active', now()) ON CONFLICT (sub) DO NOTHING",
+        json_stringify([sub, context("email") ?? ""]));
 
-    return created({
-        code:  short_code,
-        short: short_url,
-        qr_svg: qr_img_tag(short_url_full)
-    });
+    // next_code() runs inside the INSERT — code generation and the row land
+    // in one round-trip, and there is no collision retry loop to write.
+    let code = raw_sql(
+        "WITH ins AS (INSERT INTO \"link\" "
+        + "(code, url, dest_host, owner_sub, status, hits, created_at, expires_at) "
+        + "VALUES (next_code(), $1, $2, $3, 'active', 0, now(), NULLIF($4,'')::timestamptz) "
+        + "RETURNING code) SELECT code FROM ins",
+        json_stringify([req.url, host, sub, exp]));
+
+    let short_full = base_url() + "/" + code;
+    let short = replace(replace(short_full, "https://", ""), "http://", "");
+    return created({ code: code, short: short, qr: qr_img_tag(short_full) });
 }
 
 route GET "api/links/{code}" {
     let code = path_param("code");
-    let link = select Link from AppDb.Link where Link.code == @code first;
-    if (link == null) {
-        return notFound({ error: "no such link" });
+    let link = select Link from AppDb.Link
+        where Link.code == @code and Link.deleted_at is null first;
+    if (link == null or link.status != "active") {
+        return notFound({ error: "not found" });
     }
     return ok({
         code:       link.code,
@@ -301,51 +482,52 @@ route GET "api/links/{code}" {
     });
 }
 
-// Catch-all redirect. Dedicated routes (healthz, docs, ...) win on the
-// router, but defensive guard for case mismatches / trailing dots.
-route GET "{code}" use RateLimit, MetricsTracker {
-    let code = path_param("code");
+route GET "api/me/links" use Auth {
+    let sub = context("sub");
+    let links = select Link { code, url, hits, status, created_at, expires_at }
+        from AppDb.Link
+        where Link.owner_sub == @sub and Link.deleted_at is null
+        orderby Link.created_at desc
+        limit 200;
+    return ok(links);
+}
 
-    if (code == "healthz" or code == "readyz" or code == "api"
-        or code == "docs" or code == "openapi.json" or code == "stats"
-        or code == "favicon.ico" or code == "robots.txt"
-        or code == "sitemap.xml" or code == "og.svg") {
+route DELETE "api/me/links/{code}" use Auth {
+    let sub = context("sub");
+    let code = path_param("code");
+    let link = select Link from AppDb.Link
+        where Link.code == @code and Link.owner_sub == @sub and Link.deleted_at is null first;
+    if (link == null) {
         return notFound({ error: "not found" });
     }
+    link.deleted_at = now();
+    update link in AppDb.Link;
+    // Invalidate immediately — write the tombstone instead of DEL so the
+    // next hit answers 410 from cache without touching Postgres.
+    cache_put(link_cache_key(code), "__410__", NEG_TTL_SECS);
+    return ok({ deleted: code });
+}
 
-    // Single round-trip, atomic: a data-modifying CTE bumps hits and the
-    // outer SELECT returns the resolved url. Two earlier approaches both
-    // broke on the native build:
-    //   - `raw_sql(UPDATE … RETURNING url)` alone routes to exec (no
-    //     SELECT/WITH prefix) and returns the affected-row count, so the
-    //     redirect Location became "1".
-    //   - The query-layer `update … set hits = hits + 1` binds the increment
-    //     literal as i64, which Postgres rejects against the int4 `hits`
-    //     column ("error serializing parameter 0").
-    // The CTE wins on both: `hits + 1` stays inline SQL (no bound int), only
-    // `code` is a parameter, and the leading WITH makes raw_sql return the
-    // url column.
-    let params = "[\"" + code + "\"]";
-    let url = raw_sql(
-        "WITH bumped AS (UPDATE \"link\" SET hits = hits + 1 WHERE code = $1 RETURNING url) SELECT url FROM bumped",
-        params
-    );
-
-    if (url == null or url == "") {
-        return notFound({ error: "no such link" });
+// Catch-all redirect — declared LAST so it can't shadow the routes above.
+// /healthz, /readyz and /metrics are runtime built-ins and never reach it.
+route GET "{code}" {
+    let code = path_param("code");
+    // next_code() always emits exactly 6 base62 chars: anything else is a
+    // scan or a typo, answered without touching cache or database.
+    if (length(code) != 6) {
+        return notFound({ error: "not found" });
     }
-
-    return statusCode(302, { Location: url });
+    if (redis.available()) {
+        try {
+            return redirect_via_redis(code);
+        } catch (e: RedisError) {
+            return redirect_via_pg(code);
+        }
+    }
+    return redirect_via_pg(code);
 }
 
 function main() {
-    // Reads PG_* / DATABASE_URL from env — k8s injects them via the
-    // jwc-shortener-secret. Without this every DB-touching route 500s.
     setConnectionString();
-
-    // No job-handler registration: MetricsTracker's `log_insert` goes to the
-    // runtime's buffered writer, which owns its own background task and
-    // needs no wiring here. JWC_LOG_BATCH / JWC_LOG_FLUSH_MS tune it.
-
     serve(8080);
 }
