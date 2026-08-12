@@ -195,19 +195,19 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
 <div class='hero-stats'>
   <div class='hero-card'>
     <div class='hero-kicker'>Throughput</div>
-    <div class='hero-value'>14.6k</div>
+    <div class='hero-value'>103k</div>
     <div class='hero-sub'>requests / second under load</div>
   </div>
 
   <div class='hero-card'>
     <div class='hero-kicker'>Average latency</div>
-    <div class='hero-value'>11ms</div>
-    <div class='hero-sub'>across 2.2M+ requests</div>
+    <div class='hero-value'>0.5ms</div>
+    <div class='hero-sub'>across 6.2M+ requests</div>
   </div>
 
   <div class='hero-card'>
     <div class='hero-kicker'>Reliability</div>
-    <div class='hero-value'>99.96%</div>
+    <div class='hero-value'>100%</div>
     <div class='hero-sub'>successful responses</div>
   </div>
 
@@ -239,11 +239,14 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
   <div class='bench-head'>
     <div>
       <div class='bench-title'>
-        Benchmarked at <span>14,595 req/sec</span>
+        Benchmarked at <span>102,551 req/sec</span>
       </div>
       <div class='bench-copy'>
-        1kb.uz is stress-tested using JMeter against a real PostgreSQL-backed deployment.
-        Even under sustained concurrent traffic the API maintained single-digit millisecond latency.
+        Measured locally, not on the deployment: a native AOT build of this program
+        (<code>jwc build --native</code>, jwc 0.9.4) driven by bombardier at 50 connections
+        against PostgreSQL 17, averaged over two 30-second runs of <code>GET /</code>.
+        Every request is logged to <code>api_call</code> through the buffered writer,
+        with no rows dropped.
       </div>
     </div>
   </div>
@@ -251,27 +254,31 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
   <div class='bench-grid'>
     <div class='bench-box'>
       <div class='k'>GET /healthz</div>
-      <div class='v'>2ms</div>
-      <div class='d'>~2919 req/sec</div>
+      <div class='v'>0.4ms</div>
+      <div class='d'>~130k req/sec</div>
     </div>
 
     <div class='bench-box'>
       <div class='k'>POST /api/links</div>
-      <div class='v'>17ms</div>
-      <div class='d'>URL creation</div>
+      <div class='v'>3.8ms</div>
+      <div class='d'>URL creation, 1 req/sec</div>
     </div>
 
     <div class='bench-box'>
       <div class='k'>Redirect</div>
-      <div class='v'>22ms</div>
-      <div class='d'>302 redirect latency</div>
+      <div class='v'>5.3ms</div>
+      <div class='d'>302, 1 req/sec</div>
     </div>
 
     <div class='bench-box'>
       <div class='k'>Error rate</div>
-      <div class='v'>0.04%</div>
-      <div class='d'>during stress test</div>
+      <div class='v'>0.00%</div>
+      <div class='d'>6.2M requests, 0 failures</div>
     </div>
+  </div>
+  <div class='bench-copy'>
+    <code>POST /api/links</code> and the redirect are rate-limited to 60 requests
+    per minute per IP, so those two are latency at 1 req/sec, not throughput.
   </div>
 </section>
 
@@ -471,7 +478,7 @@ function og_svg(): string {
   <rect width='1200' height='630' fill='url(#glow)'/>
   <text x='96' y='300' font-family='ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif' font-size='132' font-weight='800' letter-spacing='-5' fill='#e6e8eb'>1kb<tspan fill='#6ee7b7'>.uz</tspan></text>
   <text x='100' y='372' font-family='ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif' font-size='40' fill='#8a9099'>Free URL shortener &#183; built in the JWC language</text>
-  <text x='100' y='470' font-family='ui-monospace, SFMono-Regular, Menlo, monospace' font-size='30' fill='#6ee7b7'>14.6k req/s &#183; 11ms latency &#183; 99.96% uptime</text>
+  <text x='100' y='470' font-family='ui-monospace, SFMono-Regular, Menlo, monospace' font-size='30' fill='#6ee7b7'>103k req/s &#183; 0.5ms latency &#183; 0 failed requests</text>
 </svg>
 ";
 }
