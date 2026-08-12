@@ -1,0 +1,33 @@
+<a
+  href="#main-content"
+  class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-surface-0 focus:px-3 focus:py-2 focus:shadow dark:focus:bg-surface-900"
+>
+  Skip to main content
+</a>
+
+<div class="flex h-screen overflow-hidden bg-surface-50 text-surface-900 dark:bg-surface-950 dark:text-surface-0">
+  <!-- Desktop: persistent, collapsible -->
+  @if (!layout.isMobile()) {
+    <app-sidebar [expanded]="layout.desktopOpen()" />
+  }
+
+  <!-- Mobile: off-canvas drawer -->
+  <p-drawer
+    [visible]="layout.mobileOpen()"
+    (visibleChange)="layout.mobileOpen.set($event)"
+    position="left"
+    [modal]="true"
+    [showCloseIcon]="false"
+    styleClass="!w-64 !max-w-[80vw] [&_.p-drawer-content]:!p-0"
+  >
+    <app-sidebar [expanded]="true" />
+  </p-drawer>
+
+  <div class="flex w-full min-w-0 flex-1 flex-col">
+    <app-topbar />
+    <main id="main-content" tabindex="-1" class="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+      <router-outlet />
+    </main>
+    <app-footer />
+  </div>
+</div>

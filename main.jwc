@@ -68,6 +68,9 @@ entity BlockedHost of AppDb {
 const CACHE_TTL_SECS = 300;
 const NEG_TTL_SECS   = 60;
 
+// musanna-platform's platform-wide administrator role.
+const ADMIN_ROLE = "SuperAdmin";
+
 // One round-trip for the hot path. KEYS = [link:{code}, hits:{bucket},
 // hits:cursor], ARGV = [code, bucket]. Returns a JSON object so three answers
 // cross in one reply: v ("" = miss, "__404__"/"__410__" = negative entry,
@@ -99,8 +102,23 @@ const READ_SCRIPT = "return cjson.encode(redis.call('HGETALL', KEYS[1]))";
 
 // -------------------- helpers --------------------
 
+// `env()` answers with an EMPTY STRING for a variable that is not set, not
+// with null, so `??` never fires and the caller silently gets "". That is
+// how the landing page ended up rendering `href=''` for its panel link.
+function env_or(name: string, fallback: string): string {
+    let v = env(name);
+    if (v == null or v == "") { return fallback; }
+    return v;
+}
+
 function base_url(): string {
-    return env("PUBLIC_BASE_URL") ?? "http://localhost:8080";
+    return env_or("PUBLIC_BASE_URL", "http://localhost:8080");
+}
+
+// Where the Angular panel is served from. Separate origin in development
+// (`npm start` on 4400); behind one hostname in production.
+function admin_url(): string {
+    return env_or("ADMIN_URL", "http://localhost:4400");
 }
 
 function int_env(name: string, fallback: int): int {
@@ -455,19 +473,25 @@ middleware Auth {
     }
     setContext("sub", claims.sub);
     setContext("email", claims.email ?? "");
+    setContext("name", claims.name ?? "");
+    setContext("roles", json_stringify(claims.role ?? []));
+}
+
+// Platform administrators only. Runs after `Auth`, which is what puts the
+// roles in context — `use Auth, AdminOnly` in that order.
+middleware AdminOnly {
+    // The role claim is string-or-array depending on how many roles the user
+    // has, so both shapes are matched against the JSON form rather than
+    // branching on the type.
+    if (!contains(context("roles") ?? "", "\"" + ADMIN_ROLE + "\"")) {
+        return forbidden({ error: "admin only" });
+    }
 }
 
 // -------------------- routes --------------------
 
 route GET "/" {
     return html(landing_html());
-}
-
-// The admin panel is one static page; everything it does afterwards is
-// browser-side (PKCE against the IdP, then this API with the bearer token).
-// It is also the OIDC redirect target, so it re-renders with `?code=...`.
-route GET "admin" {
-    return html(admin_html());
 }
 
 // Public counters for the landing page. Hits are flushed from Redis every
@@ -601,6 +625,121 @@ route DELETE "api/me/links/{code}" use Auth {
     // next hit answers 410 from cache without touching Postgres.
     cache_put(link_cache_key(code), "__410__", NEG_TTL_SECS);
     return ok({ deleted: code });
+}
+
+// -------------------- admin --------------------
+
+route GET "api/admin/stats" use Auth, AdminOnly {
+    let links = select count(*) from AppDb.Link where Link.deleted_at is null;
+    let users = select count(*) from AppDb.AppUser;
+    let blocked = select count(*) from AppDb.Link where Link.status != "active";
+    let clicks = raw_sql(
+        "SELECT COALESCE(SUM(hits), 0)::text FROM \"link\" WHERE deleted_at IS NULL", "[]");
+    // Last 14 days as a dense series — days with no traffic must still appear
+    // or the chart silently compresses the gaps and misreads the trend.
+    let series = raw_sql(
+        "SELECT COALESCE(json_agg(row_to_json(t) ORDER BY t.day), '[]')::text FROM ("
+        + "SELECT d::date AS day, COALESCE(SUM(s.hits), 0)::bigint AS hits "
+        + "FROM generate_series(CURRENT_DATE - 13, CURRENT_DATE, interval '1 day') d "
+        + "LEFT JOIN \"link_stat_daily\" s ON s.day = d::date "
+        + "GROUP BY d) t", "[]");
+    let top = raw_sql(
+        "SELECT COALESCE(json_agg(row_to_json(t)), '[]')::text FROM ("
+        + "SELECT code, url, hits FROM \"link\" WHERE deleted_at IS NULL AND hits > 0 "
+        + "ORDER BY hits DESC LIMIT 10) t", "[]");
+    return json({
+        links:  links,
+        users:  users,
+        blocked: blocked,
+        clicks: int(clicks),
+        series: json_parse(series),
+        top:    json_parse(top)
+    });
+}
+
+route GET "api/admin/links" use Auth, AdminOnly {
+    let q = query_param("q", "");
+    let rows = raw_sql(
+        "SELECT COALESCE(json_agg(row_to_json(t) ORDER BY t.created_at DESC), '[]')::text FROM ("
+        + "SELECT l.code, l.url, l.dest_host, l.owner_sub, l.status, l.hits, "
+        + "l.created_at, l.expires_at, l.deleted_at, u.email AS owner_email "
+        + "FROM \"link\" l LEFT JOIN \"app_user\" u ON u.sub = l.owner_sub "
+        + "WHERE ($1 = '' OR l.code ILIKE '%' || $1 || '%' OR l.url ILIKE '%' || $1 || '%') "
+        + "ORDER BY l.created_at DESC LIMIT 500) t",
+        json_stringify([q]));
+    return json({ data: json_parse(rows) });
+}
+
+// Block / unblock. A blocked link answers the same 404 as a missing one, so
+// the cache entry is replaced rather than dropped: dropping it would let the
+// next request refill it from Postgres with the old value only if the write
+// had not committed — replacing is unconditional.
+route POST "api/admin/links/{code}/status" use Auth, AdminOnly {
+    validate body {
+        status: required, minLength(6), maxLength(7), pattern(r"^(active|blocked)$");
+    }
+    let code = path_param("code");
+    let req = body();
+    let want = req.status;
+    let link = select Link from AppDb.Link where Link.code == @code first;
+    if (link == null) {
+        return notFound({ error: "not found" });
+    }
+    // `set` takes a literal, not a bound parameter, so the two transitions
+    // are spelled out rather than parameterised.
+    if (want == "blocked") {
+        update AppDb.Link set status = "blocked" where Link.code == @code;
+    } else {
+        update AppDb.Link set status = "active" where Link.code == @code;
+    }
+    if (want == "active") {
+        try { redis.del(link_cache_key(code)); } catch (e: RedisError) { }
+    } else {
+        cache_put(link_cache_key(code), "__404__", NEG_TTL_SECS);
+    }
+    return ok({ code: code, status: want });
+}
+
+route GET "api/admin/users" use Auth, AdminOnly {
+    let rows = raw_sql(
+        "SELECT COALESCE(json_agg(row_to_json(t) ORDER BY t.created_at DESC), '[]')::text FROM ("
+        + "SELECT u.sub, u.email, u.status, u.created_at, "
+        + "COUNT(l.code) FILTER (WHERE l.deleted_at IS NULL) AS links, "
+        + "COALESCE(SUM(l.hits) FILTER (WHERE l.deleted_at IS NULL), 0)::bigint AS clicks "
+        + "FROM \"app_user\" u LEFT JOIN \"link\" l ON l.owner_sub = u.sub "
+        + "GROUP BY u.sub) t", "[]");
+    return json({ data: json_parse(rows) });
+}
+
+route GET "api/admin/hosts" use Auth, AdminOnly {
+    let hosts = select BlockedHost from AppDb.BlockedHost orderby BlockedHost.host asc;
+    return json({ data: hosts });
+}
+
+route POST "api/admin/hosts" use Auth, AdminOnly {
+    validate body {
+        host: required, minLength(3), maxLength(255);
+    }
+    let hreq = body();
+    let h = lower(hreq.host);
+    let existing = select BlockedHost from AppDb.BlockedHost where BlockedHost.host == @h first;
+    if (existing != null) {
+        return ok({ host: h });
+    }
+    let row = new BlockedHost();
+    row.host = h;
+    try {
+        insert row into AppDb.BlockedHost;
+    } catch (e: DbError.UniqueViolation) {
+        // Raced with another admin — the end state is what was asked for.
+    }
+    return created({ host: h });
+}
+
+route DELETE "api/admin/hosts/{host}" use Auth, AdminOnly {
+    let h = lower(path_param("host"));
+    delete from AppDb.BlockedHost where BlockedHost.host == @h;
+    return ok({ deleted: h });
 }
 
 // Catch-all redirect — declared LAST so it can't shadow the routes above.

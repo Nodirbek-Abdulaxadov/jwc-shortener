@@ -1,0 +1,90 @@
+<!-- Reusable nav anchor (icon + optional label, tooltip when collapsed). -->
+<ng-template #navlink let-item>
+  <a
+    [routerLink]="item.path"
+    routerLinkActive
+    #rla="routerLinkActive"
+    [routerLinkActiveOptions]="{ exact: !!item.exact }"
+    [class]="rla.isActive ? activeClass : 'text-surface-600 dark:text-surface-300'"
+    (click)="onNavigate()"
+    class="flex items-center rounded-lg px-3 py-2 text-sm transition-colors hover:bg-surface-100 dark:hover:bg-surface-800"
+    [class.justify-center]="!expanded()"
+    [pTooltip]="expanded() ? '' : (item.labelKey | translate)"
+    tooltipPosition="right"
+  >
+    <i [class]="item.icon" [class.mr-3]="expanded()"></i>
+    @if (expanded()) {
+      <span class="truncate">{{ item.labelKey | translate }}</span>
+    }
+  </a>
+</ng-template>
+
+<aside
+  class="z-30 flex h-full flex-col border-r border-surface-200 bg-surface-0 transition-all duration-300 ease-in-out dark:border-surface-800 dark:bg-surface-900"
+  [class.w-64]="expanded()"
+  [class.w-16]="!expanded()"
+>
+  <!-- Brand -->
+  <div
+    class="flex h-14 shrink-0 items-center gap-2 px-4 text-surface-900 dark:text-surface-0"
+    [class.justify-center]="!expanded()"
+  >
+    <span class="inline-block h-6 w-6 shrink-0 rounded-md bg-primary-500"></span>
+    @if (expanded()) {
+      <span class="truncate text-lg font-bold">{{ appName }}</span>
+    }
+  </div>
+
+  <p-divider styleClass="!my-0" />
+
+  <div class="flex-1 overflow-y-auto px-3 py-4">
+    <nav class="flex flex-col gap-1" [attr.aria-label]="'nav.links' | translate">
+      @for (item of mainNav; track item.path) {
+        <ng-container *ngTemplateOutlet="navlink; context: { $implicit: item }" />
+      }
+    </nav>
+
+    <!-- Admin group: hidden for non-admins. Cosmetic only — every
+         /api/admin/* route re-checks the role from the token. -->
+    @if (auth.isAdmin()) {
+      <p-divider />
+      @if (expanded()) {
+        <p class="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-surface-400">
+          {{ 'nav.admin' | translate }}
+        </p>
+      }
+      <nav class="flex flex-col gap-1" [attr.aria-label]="'nav.admin' | translate">
+        @for (item of adminNav; track item.path) {
+          <ng-container *ngTemplateOutlet="navlink; context: { $implicit: item }" />
+        }
+      </nav>
+    }
+
+    <p-divider />
+
+    <nav class="flex flex-col gap-1" [attr.aria-label]="'nav.settings' | translate">
+      @for (item of secondaryNav; track item.path) {
+        <ng-container *ngTemplateOutlet="navlink; context: { $implicit: item }" />
+      }
+    </nav>
+  </div>
+
+  <p-divider styleClass="!my-0" />
+
+  <!-- User footer -->
+  <div class="p-4">
+    <div class="flex items-center gap-3" [class.justify-center]="!expanded()">
+      <p-avatar [label]="auth.initials()" shape="circle" styleClass="!bg-primary !text-white" />
+      @if (expanded()) {
+        <div class="min-w-0">
+          <p class="truncate text-sm font-medium text-surface-900 dark:text-surface-0">
+            {{ auth.user()?.name ?? 'Guest' }}
+          </p>
+          <p class="truncate text-xs text-surface-500 dark:text-surface-400">
+            {{ auth.user()?.email ?? '—' }}
+          </p>
+        </div>
+      }
+    </div>
+  </div>
+</aside>

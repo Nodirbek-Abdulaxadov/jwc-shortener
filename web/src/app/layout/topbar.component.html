@@ -1,0 +1,83 @@
+<header
+  class="flex h-14 shrink-0 items-center gap-2 border-b border-surface-200 bg-surface-0 px-4 dark:border-surface-800 dark:bg-surface-900"
+>
+  <!-- Left: sidebar toggle + app name -->
+  <div class="flex min-w-0 items-center">
+    <p-button
+      icon="pi pi-bars"
+      [text]="true"
+      [rounded]="true"
+      severity="secondary"
+      (onClick)="layout.toggle()"
+      [ariaLabel]="layout.sidebarOpen() ? 'Close sidebar' : 'Open sidebar'"
+    />
+    <h1 class="ml-2 hidden truncate text-lg font-medium text-surface-900 dark:text-surface-0 md:block">
+      {{ appName }}
+    </h1>
+  </div>
+
+  <!-- Center: search expands here so the right-hand icons never shift -->
+  <div class="flex flex-1 items-center justify-end gap-1">
+    @if (showSearch()) {
+      <p-iconfield class="w-full max-w-xs sm:max-w-sm">
+        <p-inputicon class="pi pi-search" />
+        <input
+          pInputText
+          type="search"
+          class="w-full"
+          [placeholder]="('common.search' | translate) + '…'"
+        />
+      </p-iconfield>
+      <p-button
+        icon="pi pi-times"
+        [text]="true"
+        [rounded]="true"
+        severity="secondary"
+        (onClick)="showSearch.set(false)"
+        ariaLabel="Close search"
+      />
+    }
+  </div>
+
+  <!-- Right: fixed action icons -->
+  <div class="flex items-center gap-1">
+    @if (!showSearch()) {
+      <p-button
+        icon="pi pi-search"
+        [text]="true"
+        [rounded]="true"
+        severity="secondary"
+        styleClass="hidden md:inline-flex"
+        (onClick)="showSearch.set(true)"
+        ariaLabel="Open search"
+      />
+    }
+
+    <!-- Language -->
+    <p-button
+      icon="pi pi-globe"
+      [text]="true"
+      [rounded]="true"
+      severity="secondary"
+      (onClick)="langMenu.toggle($event)"
+      [ariaLabel]="'language' | translate"
+    />
+    <p-menu #langMenu [model]="langItems()" [popup]="true" appendTo="body" />
+
+    <!-- Theme -->
+    <p-button
+      [icon]="theme.theme() === 'dark' ? 'pi pi-sun' : 'pi pi-moon'"
+      [text]="true"
+      [rounded]="true"
+      severity="secondary"
+      (onClick)="theme.toggle()"
+      ariaLabel="Toggle theme"
+    />
+
+    <!-- User -->
+    <button type="button" (click)="userMenu.toggle($event)" class="ml-1 rounded-full" aria-label="Account menu">
+      <p-avatar [label]="auth.initials()" shape="circle" styleClass="!bg-surface-200 dark:!bg-surface-700" />
+    </button>
+    <p-menu #userMenu [model]="userItems()" [popup]="true" appendTo="body" />
+  </div>
+</header>

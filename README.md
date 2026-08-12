@@ -5,19 +5,35 @@ clean-slate v2 built around a read-heavy (≈100:1) design: one server, Postgres
 native binary. Landing page, admin panel and API all come from the same process on
 one port; authentication is OIDC against **musanna-platform**.
 
+## Pieces
+
+| Part | Where | Port (dev) |
+|---|---|---|
+| API + redirects + landing page | `main.jwc`, `views.jwc` | 8080 |
+| User & admin panel (Angular 19 + PrimeNG) | `web/` | 4400 |
+| Identity provider | musanna-platform (separate repo) | 5246 |
+
 ## Endpoints
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/` | — | landing page |
-| `GET` | `/admin` | — | admin panel (also the OIDC redirect target) |
+| `GET` | `/` | — | landing page (uz/en, links to the panel) |
 | `GET` | `/{code}` | — | 302 redirect (404 unknown/blocked, 410 deleted/expired) |
 | `GET` | `/api/stats` | — | `{links, clicks, today}` for the landing counters |
 | `GET` | `/api/links/{code}` | — | `{code, url, hits, created_at}` |
 | `POST` | `/api/links` | Bearer | `{url, expires_at?}` → `201 {code, short, qr}` |
 | `GET` | `/api/me/links` | Bearer | own links, newest first |
 | `DELETE` | `/api/me/links/{code}` | Bearer | soft delete |
+| `GET` | `/api/admin/stats` | Admin | totals, 14-day series, busiest links |
+| `GET` | `/api/admin/links?q=` | Admin | every link with its owner |
+| `POST` | `/api/admin/links/{code}/status` | Admin | `{status: active\|blocked}` |
+| `GET` | `/api/admin/users` | Admin | accounts with link and click counts |
+| `GET` `POST` `DELETE` | `/api/admin/hosts[/{host}]` | Admin | destination blocklist |
 | `GET` | `/healthz` `/readyz` `/metrics` | — | runtime built-ins |
+
+"Admin" means the access token carries musanna's `SuperAdmin` role. The
+Angular guard only hides the menu; every `/api/admin/*` route re-checks the
+claim, and a non-admin token gets 403.
 
 ## How it works
 
@@ -69,9 +85,10 @@ Two entries in that repo make this app a first-class client — both already com
 - `appsettings.json` → `Applications[]` gains `{ "Code": "shortener" }`, which creates
   the `shortener.api` scope and the `musanna.shortener` resource. That resource is the
   `aud` this service expects.
-- `appsettings.Development.json` → the `shortener-admin` public client
-  (redirect `http://localhost:8080/admin`) and `http://localhost:8080` in `Cors:Origins`,
-  which the admin panel needs for the cookie login.
+- `appsettings.Development.json` → the `shortener-spa` public client
+  (redirect `http://localhost:4400/auth/callback`) and `http://localhost:4400` in
+  `Cors:Origins`, which the panel needs for the cookie login that precedes the OIDC
+  redirect.
 
 **4. This app**
 
@@ -84,20 +101,40 @@ jwc run          # http://localhost:8080
 > includes the interpreter redirect fix (`statusCode(302, {Location})` used to answer
 > with the object as a *body* under `jwc run`; native builds were unaffected).
 
+**5. The panel**
+
+```bash
+cd web
+npm install
+npm start        # http://localhost:4400
+```
+
 ## The flow
 
-1. Open <http://localhost:8080/> — landing page, live counters, and a box that resolves
-   any short code without following it.
-2. **Kirish** → `/admin`. Log in with a musanna account, or register one (phone,
-   password, name); in Development the SMS code comes back in the response and the form
-   fills it in for you.
-3. The panel logs in against musanna, then runs authorization-code + PKCE and exchanges
-   the code for an access token. It keeps the token in `sessionStorage` only.
-4. Create a short link (optional expiry), copy it, open it, watch the hit counter, and
-   soft-delete it — a deleted link answers 410.
+1. Open <http://localhost:8080/> — landing page with live counters, a uz/en switch, and
+   a box that resolves any short code without following it.
+2. **Kirish** → the panel on :4400 → `/login`. Sign in with a musanna account, or
+   register one (phone, password, name); in Development the SMS code comes back in the
+   response and the form fills it in for you.
+3. The panel posts the credentials to musanna (cookie), then runs authorization-code +
+   PKCE. `angular-auth-oidc-client` owns the tokens and refreshes them before expiry.
+4. **Havolalarim** — create a short link (optional expiry), copy it, show its QR, open
+   it, watch the hit counter, and soft-delete it (a deleted link answers 410).
+5. Signed in as `SuperAdmin`, the sidebar also shows **Administrator**: service-wide
+   stats with a 14-day chart, every link with block/unblock, the user list, and the
+   destination blocklist.
 
 The seeded superadmin is `+998900000000` / `SuperAdmin1` and the login form is
 pre-filled with it.
+
+### The panel in one paragraph
+
+`web/` starts from the in-house Angular template (Angular 19, PrimeNG, Tailwind,
+ngx-translate) and takes its OIDC wiring from musanna-app: `provideAuth(...)` with
+`withAppInitializerAuthCheck()`, `authInterceptor()` attaching the bearer token to the
+API origin only, and a two-step logout that revokes the refresh token before ending the
+platform session. Every string goes through ngx-translate — `npm run check-i18n` fails
+if a key is missing from a locale or used in the source without existing at all.
 
 ### Tokens from the command line
 
@@ -118,9 +155,9 @@ curl.exe -H "authorization: Bearer $t" http://localhost:8080/api/me/links
 
 ## Stack
 
-- **JWC** for the whole app: `main.jwc` (schema, routes, auth) and `views.jwc`
-  (landing + admin HTML). The admin panel is dependency-free — no npm, no bundler,
-  no second dev server.
+- **JWC** for the service: `main.jwc` (schema, routes, auth) and `views.jwc` (landing).
+- **Angular 19 + PrimeNG + Tailwind** for the panel in `web/`, with
+  `angular-auth-oidc-client` for OIDC.
 - **Postgres** for storage; `migrations/` applied with `jwc migrate up`.
 - **Redis** via the `jwc-redis` package.
 - **Docker** multi-stage native build (`jwc build --native`), Kubernetes via `deploy/`.

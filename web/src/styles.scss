@@ -1,0 +1,24 @@
+/* Global styles.
+ *
+ * CSS layer order so PrimeNG's styled theme (Aura) and Tailwind utilities
+ * coexist predictably: Tailwind base first, then PrimeNG, then Tailwind
+ * utilities last so `class="..."` overrides win. The same order is declared in
+ * app.config.ts (providePrimeNG -> theme.options.cssLayer.order). */
+@layer tailwind-base, primeng, tailwind-utilities;
+
+@layer tailwind-base {
+  @tailwind base;
+}
+
+@layer tailwind-utilities {
+  @tailwind components;
+  @tailwind utilities;
+}
+
+@import 'primeicons/primeicons.css';
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
