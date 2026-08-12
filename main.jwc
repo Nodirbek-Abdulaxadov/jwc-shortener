@@ -35,6 +35,12 @@ entity ApiCall of AppDb {
     method     varchar(8);
     status     int;
     latency_ms int;
+    // Microseconds. `latency_ms` is whole milliseconds and this service
+    // answers `GET /` in well under one, so across 1.48M logged requests it
+    // recorded min 0, max 1, mean 0.00 — measured, and useless for a
+    // percentile. Kept alongside rather than replaced so a deploy can land
+    // before or after the migration in either order.
+    latency_us int;
     ts         datetime;
 }
 
@@ -127,6 +133,7 @@ after {
     row.method     = m;
     row.status     = response_status();
     row.latency_ms = response_duration_ms();
+    row.latency_us = response_duration_us();
     row.ts         = now();
     log_insert("ApiCall", row);
 }
@@ -146,7 +153,12 @@ route GET "readyz" {
         let _ = raw_sql("SELECT 1", "[]");
         return json({ status: "ready" });
     } catch (e) {
-        return { status: 503, error: "db_unreachable", message: e.message };
+        // `statusCode`, not a bare object — the same trap the rate limiter
+        // was in, and worse here: a plain `{ status: 503 }` is a *body*, so
+        // an unreachable database answered `200 OK` and Kubernetes kept the
+        // pod in the load balancer. Readiness that cannot fail is not
+        // readiness.
+        return statusCode(503, { error: "db_unreachable", message: e.message });
     }
 }
 
