@@ -1,0 +1,666 @@
+// HTML for the landing page (`/`) and the admin panel (`/admin`).
+//
+// Every `.jwc` file in the project merges into one flat program, so these
+// are callable from `main.jwc` with no import.
+//
+// House rule for this file: **the HTML and JS never contain a double
+// quote.** A raw string (`r"..."`) ends at the first `"`, so attributes and
+// JS string literals are single-quoted throughout. Runtime JSON (from
+// `json_stringify` or `JSON.stringify`) is fine — it is not source text.
+//
+// The admin panel is deliberately dependency-free: no bundler, no npm, no
+// second dev server. It runs PKCE against musanna-platform straight from
+// the browser and calls this same origin for the API, so `jwc run` is the
+// whole stack.
+
+function base_css(): string {
+    return r"
+:root {
+  --bg:#0b0d10; --panel:#14181d; --panel2:#1b2027; --text:#e6e8eb;
+  --muted:#8a9099; --accent:#6ee7b7; --danger:#f87171; --border:#232830;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; padding:0; background:var(--bg); color:var(--text); }
+body { font:15px/1.55 ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; }
+a { color:var(--accent); text-decoration:none; }
+a:hover { text-decoration:underline; }
+.wrap { max-width:960px; margin:0 auto; padding:28px 22px 64px; }
+header.top { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:36px; }
+.brand { display:flex; align-items:center; gap:10px; font-weight:650; letter-spacing:-.01em; }
+.dot { width:22px; height:22px; border-radius:6px; background:var(--accent); display:inline-block; }
+.btn { display:inline-block; border:1px solid var(--border); background:var(--panel2); color:var(--text);
+       padding:9px 16px; border-radius:9px; font:inherit; font-weight:550; cursor:pointer; }
+.btn:hover { border-color:var(--accent); text-decoration:none; }
+.btn.primary { background:var(--accent); color:#08130e; border-color:var(--accent); }
+.btn.ghost { background:transparent; }
+.btn.sm { padding:5px 10px; font-size:13px; border-radius:7px; }
+.btn:disabled { opacity:.55; cursor:default; }
+.card { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:22px; }
+h1 { font-size:38px; line-height:1.15; letter-spacing:-.02em; margin:0 0 12px; }
+h2 { font-size:19px; margin:0 0 14px; letter-spacing:-.01em; }
+p.lead { color:var(--muted); font-size:17px; margin:0 0 26px; max-width:58ch; }
+label { display:block; font-size:13px; color:var(--muted); margin:0 0 5px; }
+input, select { width:100%; padding:10px 12px; border-radius:9px; border:1px solid var(--border);
+                background:var(--panel2); color:var(--text); font:inherit; }
+input:focus, select:focus { outline:none; border-color:var(--accent); }
+.row { display:flex; gap:10px; flex-wrap:wrap; }
+.row > * { flex:1 1 220px; }
+.row .grow2 { flex:2 1 340px; }
+.muted { color:var(--muted); }
+.small { font-size:13px; }
+.mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:14px; margin:26px 0; }
+.stat { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
+.stat .n { font-size:26px; font-weight:650; letter-spacing:-.02em; }
+.stat .k { color:var(--muted); font-size:13px; margin-top:2px; }
+table { width:100%; border-collapse:collapse; font-size:14px; }
+th { text-align:left; color:var(--muted); font-weight:550; font-size:12px; text-transform:uppercase;
+     letter-spacing:.04em; padding:0 10px 8px; border-bottom:1px solid var(--border); }
+td { padding:11px 10px; border-bottom:1px solid var(--border); vertical-align:middle; }
+tr:last-child td { border-bottom:none; }
+.trunc { max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block;
+         vertical-align:bottom; }
+.tabs { display:flex; gap:8px; margin-bottom:20px; }
+.pill { font-size:12px; padding:2px 9px; border-radius:20px; border:1px solid var(--border); color:var(--muted); }
+.pill.ok { color:var(--accent); border-color:#215045; }
+.msg { padding:11px 14px; border-radius:9px; margin:14px 0 0; font-size:14px; display:none; }
+.msg.err { background:#2a1618; border:1px solid #542a2c; color:#fca5a5; }
+.msg.ok { background:#122019; border:1px solid #215045; color:var(--accent); }
+.msg.show { display:block; }
+.hidden { display:none !important; }
+footer { margin-top:44px; padding-top:20px; border-top:1px solid var(--border); color:var(--muted); font-size:13px; }
+.feat { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:16px; margin:8px 0 4px; }
+.feat h3 { font-size:15px; margin:0 0 6px; }
+.feat p { margin:0; color:var(--muted); font-size:14px; }
+.qr { background:#fff; padding:8px; border-radius:8px; display:inline-block; }
+";
+}
+
+// -------------------- landing --------------------
+
+function landing_html(): string {
+    return r"<!DOCTYPE html>
+<html lang='uz'>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>jwc-shortener</title>
+<meta name='description' content='JWC tilida yozilgan URL qisqartirgich — bijektiv kodlar, Redis keshi, OIDC autentifikatsiya.'>
+<meta name='theme-color' content='#0b0d10'>
+<link rel='icon' type='image/svg+xml' href='data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20rx=%227%22%20fill=%22%230b0d10%22/%3E%3Ccircle%20cx=%2216%22%20cy=%2216%22%20r=%226%22%20fill=%22%236ee7b7%22/%3E%3C/svg%3E'>
+<style>" + base_css() + r"</style>
+</head>
+<body>
+<div class='wrap'>
+
+  <header class='top'>
+    <span class='brand'><span class='dot'></span> jwc-shortener</span>
+    <a class='btn primary' href='/admin'>Kirish</a>
+  </header>
+
+  <h1>Uzun havolalarni<br>olti belgiga siqing.</h1>
+  <p class='lead'>Bijektiv kod generatsiyasi, bitta Redis round-trip bilan redirect,
+     va musanna-platform orqali OIDC autentifikatsiya. Hammasi JWC tilida.</p>
+
+  <div class='row' style='max-width:520px'>
+    <a class='btn primary' href='/admin'>Admin panel</a>
+    <a class='btn ghost' href='#tekshir'>Havolani tekshirish</a>
+  </div>
+
+  <div class='grid3'>
+    <div class='stat'><div class='n' id='s-links'>—</div><div class='k'>havola</div></div>
+    <div class='stat'><div class='n' id='s-clicks'>—</div><div class='k'>o'tish</div></div>
+    <div class='stat'><div class='n' id='s-today'>—</div><div class='k'>bugungi o'tish</div></div>
+  </div>
+
+  <div class='card' id='tekshir'>
+    <h2>Havolani tekshirish</h2>
+    <p class='muted small' style='margin-top:-8px'>Kodni yoki to'liq qisqa havolani kiriting — qayerga
+       olib borishini ochmasdan ko'rasiz.</p>
+    <div class='row'>
+      <input id='code' class='grow2 mono' placeholder='0xOdkp yoki localhost:8080/0xOdkp' autocomplete='off'>
+      <button class='btn primary' id='check' style='flex:0 0 auto'>Tekshirish</button>
+    </div>
+    <div class='msg' id='out'></div>
+  </div>
+
+  <div class='feat' style='margin-top:32px'>
+    <div class='card'>
+      <h3>To'qnashuvsiz kodlar</h3>
+      <p>Kod ketma-ketlikning bijektiv almashtirishidan olinadi — retry ham, taxmin qilinadigan
+         tartib ham yo'q.</p>
+    </div>
+    <div class='card'>
+      <h3>Bitta round-trip</h3>
+      <p>Redirect Redis'da bitta Lua skript: kesh o'qish, hit hisoblash va flush navbati birga.</p>
+    </div>
+    <div class='card'>
+      <h3>Sizning havolalaringiz</h3>
+      <p>Har havola egasiga bog'lanadi: kvota, o'chirish va statistika admin panelda.</p>
+    </div>
+  </div>
+
+  <footer>
+    JWC tilida yozilgan ·
+    <a href='https://github.com/Nodirbek-Abdulaxadov/jwc-lang'>jwc-lang</a> ·
+    <a href='/healthz'>healthz</a> ·
+    <a href='/metrics'>metrics</a>
+  </footer>
+
+</div>
+<script>
+(function () {
+  var out = document.getElementById('out');
+  function show(kind, text) {
+    out.className = 'msg show ' + kind;
+    out.textContent = text;
+  }
+  fetch('/api/stats').then(function (r) { return r.json(); }).then(function (s) {
+    document.getElementById('s-links').textContent = s.links;
+    document.getElementById('s-clicks').textContent = s.clicks;
+    document.getElementById('s-today').textContent = s.today;
+  }).catch(function () {});
+
+  function check() {
+    var raw = document.getElementById('code').value.trim();
+    if (!raw) { return; }
+    var parts = raw.split('/');
+    var code = parts[parts.length - 1];
+    fetch('/api/links/' + encodeURIComponent(code)).then(function (r) {
+      if (r.status === 404) { show('err', 'Bunday havola yo’q.'); return null; }
+      return r.json();
+    }).then(function (d) {
+      if (!d) { return; }
+      show('ok', d.url + '  ·  ' + d.hits + ' ta o’tish');
+    }).catch(function () { show('err', 'Xatolik.'); });
+  }
+  document.getElementById('check').addEventListener('click', check);
+  document.getElementById('code').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { check(); }
+  });
+})();
+</script>
+</body>
+</html>";
+}
+
+// -------------------- admin --------------------
+
+// The panel needs four values that only the server knows. They are injected
+// as a JSON blob rather than hardcoded, so pointing the app at a different
+// IdP is an env change, not an edit here.
+function admin_config_json(): string {
+    return json_stringify({
+        authority:   env("MUSANNA_AUTHORITY") ?? "http://localhost:5246",
+        clientId:    env("ADMIN_CLIENT_ID") ?? "shortener-admin",
+        scope:       env("ADMIN_SCOPE") ?? "openid profile email offline_access shortener.api",
+        redirectUri: base_url() + "/admin"
+    });
+}
+
+function admin_html(): string {
+    return admin_html_head()
+        + "<script>window.CFG = " + admin_config_json() + ";</script>"
+        + admin_html_body();
+}
+
+function admin_html_head(): string {
+    return r"<!DOCTYPE html>
+<html lang='uz'>
+<head>
+<meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>Admin — jwc-shortener</title>
+<meta name='robots' content='noindex'>
+<meta name='theme-color' content='#0b0d10'>
+<link rel='icon' type='image/svg+xml' href='data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20rx=%227%22%20fill=%22%230b0d10%22/%3E%3Ccircle%20cx=%2216%22%20cy=%2216%22%20r=%226%22%20fill=%22%236ee7b7%22/%3E%3C/svg%3E'>
+<style>" + base_css() + r"</style>
+</head>
+<body>
+";
+}
+
+function admin_html_body(): string {
+    return r"
+<div class='wrap'>
+
+  <header class='top'>
+    <a class='brand' href='/'><span class='dot'></span> jwc-shortener</a>
+    <span id='who' class='small muted'></span>
+  </header>
+
+  <!-- ---------- signed out ---------- -->
+  <div id='gate'>
+    <h1 style='font-size:28px'>Admin panel</h1>
+    <p class='lead' style='font-size:15px'>musanna-platform hisobingiz bilan kiring.
+       Parol shu sahifada emas, o'sha platformada tekshiriladi; bu panel faqat OIDC token oladi.</p>
+
+    <div class='card' style='max-width:460px'>
+      <div class='tabs'>
+        <button class='btn sm primary' id='tab-login'>Kirish</button>
+        <button class='btn sm ghost' id='tab-reg'>Ro'yxatdan o'tish</button>
+      </div>
+
+      <div id='pane-login'>
+        <div style='margin-bottom:12px'>
+          <label for='li-id'>Telefon yoki email</label>
+          <input id='li-id' value='+998900000000' autocomplete='username'>
+        </div>
+        <div style='margin-bottom:16px'>
+          <label for='li-pw'>Parol</label>
+          <input id='li-pw' type='password' value='SuperAdmin1' autocomplete='current-password'>
+        </div>
+        <button class='btn primary' id='do-login'>Kirish</button>
+      </div>
+
+      <div id='pane-reg' class='hidden'>
+        <div class='row' style='margin-bottom:12px'>
+          <div><label for='rg-first'>Ism</label><input id='rg-first' autocomplete='given-name'></div>
+          <div><label for='rg-last'>Familiya</label><input id='rg-last' autocomplete='family-name'></div>
+        </div>
+        <div style='margin-bottom:12px'>
+          <label for='rg-phone'>Telefon</label>
+          <input id='rg-phone' placeholder='+99890...' autocomplete='tel'>
+        </div>
+        <div style='margin-bottom:12px'>
+          <label for='rg-email'>Email (ixtiyoriy)</label>
+          <input id='rg-email' type='email' autocomplete='email'>
+        </div>
+        <div style='margin-bottom:16px'>
+          <label for='rg-pw'>Parol (kamida 8 belgi)</label>
+          <input id='rg-pw' type='password' autocomplete='new-password'>
+        </div>
+        <button class='btn primary' id='do-reg'>Ro'yxatdan o'tish</button>
+
+        <div id='pane-otp' class='hidden' style='margin-top:18px; padding-top:18px; border-top:1px solid var(--border)'>
+          <label for='rg-otp'>SMS kodi</label>
+          <div class='row'>
+            <input id='rg-otp' class='mono' autocomplete='one-time-code'>
+            <button class='btn primary' id='do-otp' style='flex:0 0 auto'>Tasdiqlash</button>
+          </div>
+          <p class='muted small' id='otp-hint' style='margin:8px 0 0'></p>
+        </div>
+      </div>
+
+      <div class='msg' id='gate-msg'></div>
+    </div>
+  </div>
+
+  <!-- ---------- signed in ---------- -->
+  <div id='app' class='hidden'>
+
+    <div class='grid3'>
+      <div class='stat'><div class='n' id='m-links'>—</div><div class='k'>havolalaringiz</div></div>
+      <div class='stat'><div class='n' id='m-clicks'>—</div><div class='k'>jami o'tish</div></div>
+      <div class='stat'><div class='n' id='m-top'>—</div><div class='k'>eng ko'p o'tilgan</div></div>
+    </div>
+
+    <div class='card'>
+      <h2>Yangi qisqa havola</h2>
+      <div class='row'>
+        <input id='new-url' class='grow2' placeholder='https://example.com/juda/uzun/havola' autocomplete='off'>
+        <input id='new-exp' type='datetime-local' title='Amal qilish muddati (ixtiyoriy)'>
+        <button class='btn primary' id='do-create' style='flex:0 0 auto'>Qisqartirish</button>
+      </div>
+      <div class='msg' id='create-msg'></div>
+      <div id='created' class='hidden' style='margin-top:16px; display:flex; gap:16px; align-items:center'>
+        <div class='qr'><img id='c-qr' width='104' height='104' alt='QR'></div>
+        <div>
+          <div class='mono' style='font-size:17px'><a id='c-link' target='_blank'></a></div>
+          <div class='row' style='margin-top:8px'>
+            <button class='btn sm' id='c-copy' style='flex:0 0 auto'>Nusxa olish</button>
+            <button class='btn sm' id='c-open' style='flex:0 0 auto'>Ochib ko'rish</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class='card' style='margin-top:18px'>
+      <div style='display:flex; justify-content:space-between; align-items:center'>
+        <h2 style='margin:0'>Havolalarim</h2>
+        <div class='row' style='flex:0 0 auto'>
+          <button class='btn sm ghost' id='do-refresh' style='flex:0 0 auto'>Yangilash</button>
+          <button class='btn sm ghost' id='do-logout' style='flex:0 0 auto'>Chiqish</button>
+        </div>
+      </div>
+      <div class='msg' id='list-msg'></div>
+      <div style='overflow-x:auto; margin-top:14px'>
+        <table>
+          <thead><tr>
+            <th>Kod</th><th>Manzil</th><th>O'tish</th><th>Holat</th><th></th>
+          </tr></thead>
+          <tbody id='rows'></tbody>
+        </table>
+      </div>
+      <p class='muted small' id='empty'></p>
+    </div>
+
+  </div>
+
+  <footer>
+    Auth: <span class='mono small' id='f-authority'></span> ·
+    <a href='/'>Bosh sahifa</a>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  var CFG = window.CFG;
+  var TOKEN = 'jwcs.token';
+  var VERIFIER = 'jwcs.pkce';
+  var token = sessionStorage.getItem(TOKEN);
+
+  var $ = function (id) { return document.getElementById(id); };
+  function msg(el, kind, text) {
+    el.className = 'msg show ' + kind;
+    el.textContent = text;
+  }
+  function clearMsg(el) { el.className = 'msg'; el.textContent = ''; }
+
+  $('f-authority').textContent = CFG.authority;
+
+  // ---------- PKCE ----------
+  function randomStr() {
+    var a = new Uint8Array(32);
+    crypto.getRandomValues(a);
+    return b64url(a.buffer);
+  }
+  function b64url(buf) {
+    var bin = '';
+    var bytes = new Uint8Array(buf);
+    for (var i = 0; i < bytes.length; i++) { bin += String.fromCharCode(bytes[i]); }
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function startAuth() {
+    var verifier = randomStr();
+    sessionStorage.setItem(VERIFIER, verifier);
+    return crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)).then(function (d) {
+      var url = CFG.authority + '/connect/authorize'
+        + '?response_type=code'
+        + '&client_id=' + encodeURIComponent(CFG.clientId)
+        + '&redirect_uri=' + encodeURIComponent(CFG.redirectUri)
+        + '&scope=' + encodeURIComponent(CFG.scope)
+        + '&code_challenge=' + b64url(d)
+        + '&code_challenge_method=S256'
+        + '&state=' + randomStr().slice(0, 12);
+      window.location.href = url;
+    });
+  }
+  function exchange(code) {
+    var body = new URLSearchParams();
+    body.set('grant_type', 'authorization_code');
+    body.set('client_id', CFG.clientId);
+    body.set('code', code);
+    body.set('redirect_uri', CFG.redirectUri);
+    body.set('code_verifier', sessionStorage.getItem(VERIFIER) || '');
+    return fetch(CFG.authority + '/connect/token', { method: 'POST', body: body })
+      .then(function (r) { return r.json(); })
+      .then(function (t) {
+        if (!t.access_token) { throw new Error(t.error_description || t.error || 'token olinmadi'); }
+        sessionStorage.removeItem(VERIFIER);
+        sessionStorage.setItem(TOKEN, t.access_token);
+        token = t.access_token;
+      });
+  }
+
+  // ---------- musanna identity ----------
+  function idp(path, payload) {
+    return fetch(CFG.authority + '/api/identity/' + path, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok) { throw new Error(d.error || d.message || ('HTTP ' + r.status)); }
+        return d;
+      });
+    });
+  }
+
+  // ---------- shortener api ----------
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = opts.headers || {};
+    opts.headers['authorization'] = 'Bearer ' + token;
+    return fetch('/api' + path, opts).then(function (r) {
+      if (r.status === 401) { signOut(); throw new Error('Sessiya tugadi, qaytadan kiring.'); }
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok) { throw new Error(d.error || ('HTTP ' + r.status)); }
+        return d;
+      });
+    });
+  }
+
+  function signOut() {
+    sessionStorage.removeItem(TOKEN);
+    token = null;
+    $('app').classList.add('hidden');
+    $('gate').classList.remove('hidden');
+    $('who').textContent = '';
+  }
+
+  // ---------- gate ----------
+  $('tab-login').addEventListener('click', function () {
+    $('pane-login').classList.remove('hidden');
+    $('pane-reg').classList.add('hidden');
+    $('tab-login').className = 'btn sm primary';
+    $('tab-reg').className = 'btn sm ghost';
+    clearMsg($('gate-msg'));
+  });
+  $('tab-reg').addEventListener('click', function () {
+    $('pane-reg').classList.remove('hidden');
+    $('pane-login').classList.add('hidden');
+    $('tab-reg').className = 'btn sm primary';
+    $('tab-login').className = 'btn sm ghost';
+    clearMsg($('gate-msg'));
+  });
+
+  $('do-login').addEventListener('click', function () {
+    clearMsg($('gate-msg'));
+    $('do-login').disabled = true;
+    idp('login', { identifier: $('li-id').value.trim(), password: $('li-pw').value })
+      .then(function (d) {
+        if (d.requiresTwoFactor) { throw new Error('Ikki bosqichli tasdiq yoqilgan — bu panel uni hali qo’llamaydi.'); }
+        return startAuth();
+      })
+      .catch(function (e) {
+        $('do-login').disabled = false;
+        msg($('gate-msg'), 'err', e.message);
+      });
+  });
+
+  var pendingUserId = null;
+  $('do-reg').addEventListener('click', function () {
+    clearMsg($('gate-msg'));
+    $('do-reg').disabled = true;
+    idp('register', {
+      phone: $('rg-phone').value.trim(),
+      password: $('rg-pw').value,
+      firstName: $('rg-first').value.trim(),
+      lastName: $('rg-last').value.trim() || null,
+      email: $('rg-email').value.trim() || null,
+      locale: 'uz'
+    }).then(function (d) {
+      pendingUserId = d.userId;
+      $('pane-otp').classList.remove('hidden');
+      $('do-reg').disabled = false;
+      if (d.phoneConfirmationCode) {
+        $('rg-otp').value = d.phoneConfirmationCode;
+        $('otp-hint').textContent = 'Dev muhitida kod javobda qaytdi va avtomatik to’ldirildi.';
+      } else {
+        $('otp-hint').textContent = 'Kod SMS orqali yuborildi.';
+      }
+      msg($('gate-msg'), 'ok', 'Hisob yaratildi — telefonni tasdiqlang.');
+    }).catch(function (e) {
+      $('do-reg').disabled = false;
+      msg($('gate-msg'), 'err', e.message);
+    });
+  });
+
+  $('do-otp').addEventListener('click', function () {
+    clearMsg($('gate-msg'));
+    $('do-otp').disabled = true;
+    idp('confirm-phone', { userId: pendingUserId, code: $('rg-otp').value.trim() })
+      .then(function () {
+        return idp('login', { identifier: $('rg-phone').value.trim(), password: $('rg-pw').value });
+      })
+      .then(function () { return startAuth(); })
+      .catch(function (e) {
+        $('do-otp').disabled = false;
+        msg($('gate-msg'), 'err', e.message);
+      });
+  });
+
+  // ---------- dashboard ----------
+  function shortUrl(code) { return window.location.origin + '/' + code; }
+
+  function render(links) {
+    var tbody = $('rows');
+    tbody.textContent = '';
+    var clicks = 0;
+    var top = 0;
+    links.forEach(function (l) {
+      clicks += l.hits;
+      if (l.hits > top) { top = l.hits; }
+      var tr = document.createElement('tr');
+
+      var tdCode = document.createElement('td');
+      var a = document.createElement('a');
+      a.href = '/' + l.code;
+      a.target = '_blank';
+      a.className = 'mono';
+      a.textContent = l.code;
+      tdCode.appendChild(a);
+      tr.appendChild(tdCode);
+
+      var tdUrl = document.createElement('td');
+      var span = document.createElement('span');
+      span.className = 'trunc muted';
+      span.title = l.url;
+      span.textContent = l.url;
+      tdUrl.appendChild(span);
+      tr.appendChild(tdUrl);
+
+      var tdHits = document.createElement('td');
+      tdHits.textContent = l.hits;
+      tr.appendChild(tdHits);
+
+      var tdStatus = document.createElement('td');
+      var pill = document.createElement('span');
+      var expired = l.expires_at && new Date(l.expires_at) <= new Date();
+      pill.className = 'pill' + (l.status === 'active' && !expired ? ' ok' : '');
+      pill.textContent = expired ? 'muddati tugagan' : l.status;
+      tdStatus.appendChild(pill);
+      tr.appendChild(tdStatus);
+
+      var tdAct = document.createElement('td');
+      tdAct.style.textAlign = 'right';
+      var copy = document.createElement('button');
+      copy.className = 'btn sm ghost';
+      copy.textContent = 'Nusxa';
+      copy.addEventListener('click', function () {
+        navigator.clipboard.writeText(shortUrl(l.code));
+        copy.textContent = 'Nusxalandi';
+        setTimeout(function () { copy.textContent = 'Nusxa'; }, 1200);
+      });
+      var del = document.createElement('button');
+      del.className = 'btn sm ghost';
+      del.style.marginLeft = '6px';
+      del.textContent = 'O’chirish';
+      del.addEventListener('click', function () {
+        del.disabled = true;
+        api('/me/links/' + l.code, { method: 'DELETE' })
+          .then(load)
+          .catch(function (e) { del.disabled = false; msg($('list-msg'), 'err', e.message); });
+      });
+      tdAct.appendChild(copy);
+      tdAct.appendChild(del);
+      tr.appendChild(tdAct);
+
+      tbody.appendChild(tr);
+    });
+    $('m-links').textContent = links.length;
+    $('m-clicks').textContent = clicks;
+    $('m-top').textContent = top;
+    $('empty').textContent = links.length ? '' : 'Hali havola yo’q — yuqorida bittasini yarating.';
+  }
+
+  function load() {
+    clearMsg($('list-msg'));
+    return api('/me/links').then(function (d) { render(d.data || d); })
+      .catch(function (e) { msg($('list-msg'), 'err', e.message); });
+  }
+
+  $('do-refresh').addEventListener('click', load);
+  $('do-logout').addEventListener('click', signOut);
+
+  $('do-create').addEventListener('click', function () {
+    clearMsg($('create-msg'));
+    var url = $('new-url').value.trim();
+    if (!url) { return; }
+    var payload = { url: url };
+    var exp = $('new-exp').value;
+    if (exp) { payload.expires_at = new Date(exp).toISOString(); }
+    $('do-create').disabled = true;
+    api('/links', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function (d) {
+      $('do-create').disabled = false;
+      $('new-url').value = '';
+      $('new-exp').value = '';
+      $('created').classList.remove('hidden');
+      $('c-qr').src = d.qr;
+      var link = $('c-link');
+      link.textContent = d.short;
+      link.href = shortUrl(d.code);
+      $('c-copy').onclick = function () {
+        navigator.clipboard.writeText(shortUrl(d.code));
+        $('c-copy').textContent = 'Nusxalandi';
+        setTimeout(function () { $('c-copy').textContent = 'Nusxa olish'; }, 1200);
+      };
+      $('c-open').onclick = function () { window.open(shortUrl(d.code), '_blank'); };
+      msg($('create-msg'), 'ok', 'Tayyor: ' + d.short);
+      load();
+    }).catch(function (e) {
+      $('do-create').disabled = false;
+      msg($('create-msg'), 'err', e.message);
+    });
+  });
+
+  // ---------- boot ----------
+  function enter() {
+    $('gate').classList.add('hidden');
+    $('app').classList.remove('hidden');
+    var payload = null;
+    try {
+      var part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      payload = JSON.parse(atob(part + '==='.slice((part.length + 3) % 4)));
+    } catch (e) { payload = {}; }
+    $('who').textContent = (payload.name || payload.sub || '') + '  ';
+    load();
+  }
+
+  var params = new URLSearchParams(window.location.search);
+  if (params.get('code')) {
+    exchange(params.get('code')).then(function () {
+      history.replaceState({}, '', '/admin');
+      enter();
+    }).catch(function (e) {
+      history.replaceState({}, '', '/admin');
+      msg($('gate-msg'), 'err', e.message);
+    });
+  } else if (params.get('error')) {
+    history.replaceState({}, '', '/admin');
+    msg($('gate-msg'), 'err', params.get('error_description') || params.get('error'));
+  } else if (token) {
+    enter();
+  }
+})();
+</script>
+</body>
+</html>";
+}

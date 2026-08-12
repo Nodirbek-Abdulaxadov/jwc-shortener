@@ -92,13 +92,10 @@ const COUNT_SCRIPT =
     "redis.call('HINCRBY', KEYS[1], ARGV[1], 1) " +
     "redis.call('EXPIRE', KEYS[1], 3600) return ''";
 
-// Drain one bucket atomically: HGETALL + DEL in one script, so a delta can
-// never be read twice. Late writers racing the drain recreate the bucket
-// with their delta only — the next cycle's catch-up pass picks it up.
-const DRAIN_SCRIPT =
-    "local h = redis.call('HGETALL', KEYS[1]) " +
-    "redis.call('DEL', KEYS[1]) " +
-    "return cjson.encode(h)";
+// Read one closed bucket. HGETALL has no JWC built-in, so it goes through
+// Lua; `cjson.encode` is what carries the flat field/value list back as one
+// string. The DELETE is deliberately NOT here — see `flush_bucket`.
+const READ_SCRIPT = "return cjson.encode(redis.call('HGETALL', KEYS[1]))";
 
 // -------------------- helpers --------------------
 
@@ -304,8 +301,13 @@ function serve_from_db(code: string, bucket: int) {
 
 // Drain claimed buckets into Postgres. Only ever runs on the one request
 // that won the cursor claim, so ~one request per 10s pays a few extra
-// round-trips. The cursor is already advanced: a bucket that fails here is
-// lost — same durability class the design accepts for AOF everysec.
+// round-trips.
+//
+// A failure here is LOGGED, not swallowed: the bucket is only deleted after
+// Postgres has taken the delta, so a failed flush leaves the counts in
+// Redis — but it also means the cursor has moved past that bucket and
+// nothing will retry it. Silence would turn "counters stopped moving" into
+// a mystery.
 function flush_range(from: int, to: int) {
     let b = from;
     if (to - b > 30) { b = to - 30; }   // older buckets are past TTL anyway
@@ -313,14 +315,14 @@ function flush_range(from: int, to: int) {
         try {
             flush_bucket(b);
         } catch (e) {
-            // skip — next rollover retries anything a late writer recreated
+            print("hit flush failed for bucket " + b + ": " + e.message);
         }
         b = b + 1;
     }
 }
 
 function flush_bucket(bucket: int) {
-    let raw = redis_eval(DRAIN_SCRIPT, json_stringify(["hits:" + bucket]), json_stringify([]));
+    let raw = redis_eval(READ_SCRIPT, json_stringify(["hits:" + bucket]), json_stringify([]));
     if (raw == null or raw == "" or raw == "{}" or raw == "[]") { return; }
     // HGETALL comes back as a flat [field, value, field, value, ...] array;
     // fold it into two Postgres array literals (codes are base62 — no quoting).
@@ -344,18 +346,29 @@ function flush_bucket(bucket: int) {
         }
     }
     if (codes == "") { return; }
-    let params = json_stringify(["{" + codes + "}", "{" + deltas + "}"]);
+    // Comma-joined lists split by Postgres, NOT array literals bound to
+    // `$1::text[]`: that form makes Postgres infer the PARAMETER as an
+    // array type, and the driver sends a string — the bind then fails with
+    // a bare "Failed to execute SQL statement". `string_to_array($1, ',')`
+    // keeps both parameters plain text, which is what JWC can bind.
+    let params = json_stringify([codes, deltas]);
     raw_sql(
         "UPDATE \"link\" SET hits = link.hits + v.d "
-        + "FROM (SELECT unnest($1::text[]) AS code, unnest($2::bigint[]) AS d) v "
+        + "FROM (SELECT unnest(string_to_array($1, ',')) AS code, "
+        + "unnest(string_to_array($2, ',')::bigint[]) AS d) v "
         + "WHERE link.code = v.code",
         params);
     raw_sql(
         "INSERT INTO \"link_stat_daily\" (code, day, hits) "
         + "SELECT v.code, CURRENT_DATE, v.d "
-        + "FROM (SELECT unnest($1::text[]) AS code, unnest($2::bigint[]) AS d) v "
+        + "FROM (SELECT unnest(string_to_array($1, ',')) AS code, "
+        + "unnest(string_to_array($2, ',')::bigint[]) AS d) v "
         + "ON CONFLICT (code, day) DO UPDATE SET hits = link_stat_daily.hits + EXCLUDED.hits",
         params);
+    // Only now is the bucket safe to drop. Draining and deleting in one
+    // script (the obvious shape) loses the whole bucket whenever the
+    // Postgres write afterwards fails — the deltas are already gone.
+    redis.del("hits:" + bucket);
 }
 
 function redirect_via_redis(code: string) {
@@ -394,6 +407,27 @@ function redirect_via_pg(code: string) {
     return serve_from_db(code, -1);
 }
 
+// Record the caller on first sight. JWC has no upsert syntax, so this is a
+// read-then-write; the unique violation from two concurrent first requests
+// is caught rather than prevented, which is the same outcome ON CONFLICT
+// DO NOTHING would give.
+function ensure_user(sub: string, email: string) {
+    let existing = select AppUser from AppDb.AppUser where AppUser.sub == @sub first;
+    if (existing != null) { return; }
+    let u = new AppUser();
+    u.sub        = sub;
+    u.status     = "active";
+    u.created_at = now();
+    if (email != "") {
+        u.email = email;
+    }
+    try {
+        insert u into AppDb.AppUser;
+    } catch (e: DbError.UniqueViolation) {
+        // Raced with another request from the same new user — already there.
+    }
+}
+
 // -------------------- middleware --------------------
 
 // OIDC bearer auth against the IdP's JWKS (RS256). iss/aud/leeway are
@@ -426,13 +460,25 @@ middleware Auth {
 // -------------------- routes --------------------
 
 route GET "/" {
-    return json({
-        service: "jwc-shortener",
-        create:  "POST /api/links {url, expires_at?} (Bearer)",
-        follow:  "GET /{code}",
-        info:    "GET /api/links/{code}",
-        mine:    "GET /api/me/links (Bearer)"
-    });
+    return html(landing_html());
+}
+
+// The admin panel is one static page; everything it does afterwards is
+// browser-side (PKCE against the IdP, then this API with the bearer token).
+// It is also the OIDC redirect target, so it re-renders with `?code=...`.
+route GET "admin" {
+    return html(admin_html());
+}
+
+// Public counters for the landing page. Hits are flushed from Redis every
+// ~10s, so these lag by at most one bucket.
+route GET "api/stats" {
+    let links = select count(*) from AppDb.Link where Link.deleted_at is null;
+    let clicks = raw_sql(
+        "SELECT COALESCE(SUM(hits), 0)::text FROM \"link\" WHERE deleted_at IS NULL", "[]");
+    let today = raw_sql(
+        "SELECT COALESCE(SUM(hits), 0)::text FROM \"link_stat_daily\" WHERE day = CURRENT_DATE", "[]");
+    return json({ links: links, clicks: int(clicks), today: int(today) });
 }
 
 route POST "api/links" use Auth {
@@ -467,32 +513,49 @@ route POST "api/links" use Auth {
     }
 
     // expires_at (optional): let Postgres judge the format, reject the past.
+    // The comparison returns a CASE token rather than a cast boolean —
+    // `boolean::text` is 'true'/'false', not the 't'/'f' that Postgres
+    // *displays*, and the mismatch silently rejected every valid date.
     let exp = "" + (req.expires_at ?? "");
     if (exp != "") {
-        let in_future = "f";
+        let in_future = "n";
         try {
-            in_future = raw_sql("SELECT ($1::timestamptz > now())::text", json_stringify([exp]));
+            in_future = raw_sql(
+                "SELECT CASE WHEN $1::timestamptz > now() THEN 'y' ELSE 'n' END",
+                json_stringify([exp]));
         } catch (e) {
             return badRequest("expires_at: invalid timestamp");
         }
-        if (in_future != "t") {
+        if (in_future != "y") {
             return badRequest("expires_at must be in the future");
         }
     }
 
-    raw_sql(
-        "INSERT INTO \"app_user\" (sub, email, status, created_at) "
-        + "VALUES ($1, NULLIF($2,''), 'active', now()) ON CONFLICT (sub) DO NOTHING",
-        json_stringify([sub, context("email") ?? ""]));
+    // Both writes go through the entity layer rather than raw_sql, and that
+    // is load-bearing: raw_sql binds parameters by the STRING's shape, so a
+    // GUID-shaped `sub` from the IdP is sent as a Postgres `uuid` and the
+    // varchar column rejects it. The entity binder uses the declared column
+    // type instead. `sub` cannot be a uuid column either — a
+    // client_credentials token carries the client id there, not a GUID.
+    ensure_user(sub, context("email") ?? "");
 
-    // next_code() runs inside the INSERT — code generation and the row land
-    // in one round-trip, and there is no collision retry loop to write.
-    let code = raw_sql(
-        "WITH ins AS (INSERT INTO \"link\" "
-        + "(code, url, dest_host, owner_sub, status, hits, created_at, expires_at) "
-        + "VALUES (next_code(), $1, $2, $3, 'active', 0, now(), NULLIF($4,'')::timestamptz) "
-        + "RETURNING code) SELECT code FROM ins",
-        json_stringify([req.url, host, sub, exp]));
+    // Code generation stays in SQL (bijective permutation of a sequence, no
+    // collision retry) but is now its own round-trip, since the INSERT that
+    // consumes it is an entity insert.
+    let code = raw_sql("SELECT next_code()", "[]");
+
+    let row = new Link();
+    row.code       = code;
+    row.url        = req.url;
+    row.dest_host  = host;
+    row.owner_sub  = sub;
+    row.status     = "active";
+    row.hits       = 0;
+    row.created_at = now();
+    if (exp != "") {
+        row.expires_at = exp;
+    }
+    insert row into AppDb.Link;
 
     let short_full = base_url() + "/" + code;
     let short = replace(replace(short_full, "https://", ""), "http://", "");
