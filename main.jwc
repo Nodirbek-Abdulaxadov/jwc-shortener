@@ -35,6 +35,12 @@ entity ApiCall of AppDb {
     method     varchar(8);
     status     int;
     latency_ms int;
+    // Microseconds. `latency_ms` is whole milliseconds and this service
+    // answers `GET /` in well under one, so across 1.48M logged requests it
+    // recorded min 0, max 1, mean 0.00 — measured, and useless for a
+    // percentile. Kept alongside rather than replaced so a deploy can land
+    // before or after the migration in either order.
+    latency_us int;
     ts         datetime;
 }
 
@@ -84,7 +90,11 @@ function rate_limit_bucket() {
 // Redis is down would be the worse outcome.
 middleware RateLimit {
     if (!redis.rate_limit("rl:" + rate_limit_bucket(), 60, 60)) {
-        return { status: 429, error: "rate limited" };
+        // `statusCode`, not a bare `{ status: 429 }`: a plain object is a
+        // response *body*, so the key named `status` is just data and the
+        // request came back 200 with a 429-shaped payload. A benchmark
+        // blocked 92,675 requests and every one of them was a 2xx.
+        return statusCode(429, { error: "rate limited" });
     }
 }
 
@@ -123,6 +133,7 @@ after {
     row.method     = m;
     row.status     = response_status();
     row.latency_ms = response_duration_ms();
+    row.latency_us = response_duration_us();
     row.ts         = now();
     log_insert("ApiCall", row);
 }
@@ -142,7 +153,12 @@ route GET "readyz" {
         let _ = raw_sql("SELECT 1", "[]");
         return json({ status: "ready" });
     } catch (e) {
-        return { status: 503, error: "db_unreachable", message: e.message };
+        // `statusCode`, not a bare object — the same trap the rate limiter
+        // was in, and worse here: a plain `{ status: 503 }` is a *body*, so
+        // an unreachable database answered `200 OK` and Kubernetes kept the
+        // pod in the load balancer. Readiness that cannot fail is not
+        // readiness.
+        return statusCode(503, { error: "db_unreachable", message: e.message });
     }
 }
 
@@ -160,19 +176,24 @@ route GET "openapi.json" {
     return openapi_spec();
 }
 
-// SEO / crawler endpoints. `robots.txt` and `sitemap.xml` are returned as
-// bare strings (same pattern as `openapi.json`); `og.svg` backs the
-// OpenGraph / Twitter social card referenced from the landing `<head>`.
+// SEO / crawler endpoints. `og.svg` backs the OpenGraph / Twitter social
+// card referenced from the landing `<head>`.
+//
+// All three go through `response(body, mime)` rather than returning a bare
+// string. A bare string carries no content-type, so the runtime falls back
+// to `application/json` — right for `openapi.json` below, wrong for these:
+// a crawler reading `sitemap.xml` as JSON skips it, and a social card
+// served as JSON does not render.
 route GET "robots.txt" {
-    return robots_txt();
+    return response(robots_txt(), "text/plain");
 }
 
 route GET "sitemap.xml" {
-    return sitemap_xml();
+    return response(sitemap_xml(), "application/xml");
 }
 
 route GET "og.svg" {
-    return og_svg();
+    return response(og_svg(), "image/svg+xml");
 }
 
 route GET "api/v1/stats" {
