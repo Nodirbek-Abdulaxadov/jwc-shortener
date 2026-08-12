@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../jwc-lang"
+		},
+		{
+			"path": "../musanna-platform"
 		}
 	],
 	"settings": {}

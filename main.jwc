@@ -116,6 +116,30 @@ function link_cache_key(code: string): string {
     return "link:" + code;
 }
 
+// QR image URL for a short link. Inlined rather than taken from the
+// `qr-lite` package: that package declares no `namespace`, so its decls
+// default to the namespace "qr-lite" — which has a dash and therefore
+// cannot be written as a qualified call, leaving its functions
+// unreachable from an app (`Unknown function: qr_img_tag` at runtime).
+//
+// Only the short URL is encoded here, and a short URL is
+// scheme + host + "/" + base62, so ":" and "/" are the only characters
+// that ever need escaping.
+function qr_url(text: string): string {
+    let encoded = "";
+    for ch in split(text, "") {
+        if (ch == "") { continue; }
+        if (ch == ":") {
+            encoded = encoded + "%3A";
+        } else if (ch == "/") {
+            encoded = encoded + "%2F";
+        } else {
+            encoded = encoded + ch;
+        }
+    }
+    return "https://barcodeapi.org/api/qr/" + encoded + "?format=svg";
+}
+
 // Best-effort cache ops: when Redis is configured but unreachable these
 // raise RedisError, and a cache problem must never fail a request that
 // Postgres can still answer. Unconfigured Redis needs no guard — the
@@ -374,14 +398,21 @@ function redirect_via_pg(code: string) {
 
 // OIDC bearer auth against the IdP's JWKS (RS256). iss/aud/leeway are
 // enforced by the runtime via JWC_JWT_EXPECTED_ISS / _AUD / _LEEWAY_SECS.
+//
+// There is no symmetric-secret escape hatch: with JWKS_URL unset every
+// authed route answers 503 rather than letting requests through.
 middleware Auth {
     let raw = header("authorization");
     if (raw == null or raw == "") {
         return unauthorized({ error: "missing bearer token" });
     }
+    let jwks = env("JWKS_URL");
+    if (jwks == null or jwks == "") {
+        return statusCode(503, { error: "auth not configured" });
+    }
     let claims = null;
     try {
-        claims = json_parse(await jwt_verify_jwks(raw, env("JWKS_URL")));
+        claims = json_parse(await jwt_verify_jwks(raw, jwks));
     } catch (e) {
         return unauthorized({ error: "invalid token" });
     }
@@ -427,12 +458,12 @@ route POST "api/links" use Auth {
 
     let host = extract_host(req.url);
     if (is_forbidden_host(host)) {
-        return badRequest({ error: "url host not allowed" });
+        return badRequest("url host not allowed");
     }
     let blocked = select BlockedHost from AppDb.BlockedHost
         where BlockedHost.host == @host first;
     if (blocked != null) {
-        return badRequest({ error: "url host not allowed" });
+        return badRequest("url host not allowed");
     }
 
     // expires_at (optional): let Postgres judge the format, reject the past.
@@ -442,10 +473,10 @@ route POST "api/links" use Auth {
         try {
             in_future = raw_sql("SELECT ($1::timestamptz > now())::text", json_stringify([exp]));
         } catch (e) {
-            return badRequest({ error: "expires_at: invalid timestamp" });
+            return badRequest("expires_at: invalid timestamp");
         }
         if (in_future != "t") {
-            return badRequest({ error: "expires_at must be in the future" });
+            return badRequest("expires_at must be in the future");
         }
     }
 
@@ -465,7 +496,7 @@ route POST "api/links" use Auth {
 
     let short_full = base_url() + "/" + code;
     let short = replace(replace(short_full, "https://", ""), "http://", "");
-    return created({ code: code, short: short, qr: qr_img_tag(short_full) });
+    return created({ code: code, short: short, qr: qr_url(short_full) });
 }
 
 route GET "api/links/{code}" {
