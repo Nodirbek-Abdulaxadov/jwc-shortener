@@ -28,8 +28,16 @@ RUN curl -fsSL https://github.com/Nodirbek-Abdulaxadov/jwc-lang/releases/downloa
     && jwc --version
 
 COPY . .
-# Force a portable baseline CPU target. `jwc build --native` generates Rust and
-# compiles it with the embedded cargo/rustc toolchain, which honours RUSTFLAGS.
+# Why this stage is `rust:*` and not a bare slim image: `jwc build --native`
+# generates Rust source and shells out to a real `cargo build`. There is no
+# toolchain inside the `jwc` binary — `find_cargo()` looks on PATH and then at
+# `~/.jwc/toolchain/bin/cargo`, which nothing installs — so without cargo the
+# build stops at "`cargo` not found". Only `--native` needs it; `jwc run`,
+# `check`, `lint`, `fmt` and `migrate` are all self-contained, which is why
+# the runtime stage below ships no toolchain.
+#
+# Force a portable baseline CPU target. That cargo invocation honours
+# RUSTFLAGS.
 # Without pinning target-cpu, newer CI runners bake in host-only SIMD (AVX-512)
 # and the binary dies with SIGILL / "trap invalid opcode" on older or
 # feature-masked CPUs — e.g. the QEMU "AMD EPYC" model on the production node.
