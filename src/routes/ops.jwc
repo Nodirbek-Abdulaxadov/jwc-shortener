@@ -4,13 +4,15 @@ import app;
 import db.links;
 import middleware.metrics;
 
---- Liveness. The process is up; nothing downstream is consulted, because a
---- probe that fails when the database blips restarts a healthy pod.
-routes "/healthz" {
-    route GET "" {
-        return json({ status: "ok" });
-    }
-}
+--- `/healthz`, `/readyz` and `/metrics` are served by the runtime at fixed
+--- names and are not declarable (config.md §4). 0.9.x needed `/healthz` and
+--- `/readyz` written out here; 1.0 does not, and the built-in `/readyz`
+--- round-trips Postgres *and* Redis and names which one failed, which the
+--- hand-written one did not.
+---
+--- They survive `/{code}` because a route reaching one of those names only
+--- through a path parameter does not win (§4.0.3). Before that rule this
+--- service's catch-all answered the readiness probe with "no such link".
 
 --- Aggregate traffic, for the counters on the landing page.
 routes "/api/v1/stats" use MetricsTracker {
