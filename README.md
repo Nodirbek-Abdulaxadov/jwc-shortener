@@ -109,7 +109,7 @@ be reconciled with `jwc migrate status` rather than applied from empty.
 
 - **JWC** for the entire application.
 - **Postgres** for storage, **Redis** for the rate-limit window.
-- **Docker**: no build stage — 1.0 has no native backend, so the image is
+- **Docker**: no build stage — the image ships the compiler and the sources, so it is
   the compiler plus `src/`, and the container runs `jwc serve`.
 - **Kubernetes** + ArgoCD via the GitOps repo.
 - **Cloudflare** edge + Let's Encrypt cert via cluster cert-manager.

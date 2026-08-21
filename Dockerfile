@@ -1,9 +1,15 @@
 # --- fetch the compiler ------------------------------------------------
 #
-# There is no build stage any more. `jwc build --native` was the 0.9.x AOT
-# path; the 1.0 vocabulary has no native backend and `jwc serve` runs the
-# program directly, so the image needs the compiler and the sources and no
-# Rust toolchain at all.
+# No build stage: the image ships the compiler and the sources, and
+# `jwc serve` runs the program directly, so there is no Rust toolchain here.
+#
+# The native AOT backend is back as of 0.9.902 — `jwc build` produces a
+# single binary, and this service is one of the programs it was verified
+# against: built natively and diffed against `jwc serve` request by request,
+# every route identical. Going back to a two-stage image is worth doing once
+# a release carries that backend; 0.9.9 (pinned below) does not, and pinning
+# to a version that does not exist would break the build rather than the
+# benchmark.
 FROM debian:trixie-slim AS fetch
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates && rm -rf /var/lib/apt/lists/*

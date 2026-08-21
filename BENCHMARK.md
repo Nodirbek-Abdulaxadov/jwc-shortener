@@ -1,7 +1,8 @@
 # jwc-shortener A/B benchmark — so'rov loglashni kritik yo'ldan olib chiqish
 
 > **Tarixiy yozuv.** Quyidagi o'lchovlar 0.9.x ning `jwc build --native`
-> yo'lida olingan. 1.0 lug'atida native backend yo'q — dastur `jwc serve`
+> yo'lida olingan. Native backend 0.9.902 da qaytdi (`jwc build`), lekin bu
+> raqamlar hali qayta o'lchanmagan — hozircha dastur `jwc serve`
 > ostida interpretator bilan ishlaydi — va `log_insert` ham olib tashlangan
 > (builtins.md §10): telemetriya qatorini `after` bloki oddiy `insert` bilan
 > yozadi. Raqamlar o'sha paytda o'lchangan holicha qoldirilgan; ular
