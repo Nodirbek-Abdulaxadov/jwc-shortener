@@ -7,9 +7,13 @@
 # single binary, and this service is one of the programs it was verified
 # against: built natively and diffed against `jwc serve` request by request,
 # every route identical. Going back to a two-stage image is worth doing once
-# a release carries that backend; 0.9.9 (pinned below) does not, and pinning
-# to a version that does not exist would break the build rather than the
-# benchmark.
+# a release carries that backend.
+#
+# NOTE: the pin below is on a release that has not been cut. The newest tag
+# on jwc-lang is v0.9.7, so this stage 404s until v0.9.9 (or later) exists.
+# Tagging is a human step, deliberately: nothing here mints a version.
+# Until then, build with `--build-arg JWC_VERSION=0.9.7` and expect the
+# features listed below to be missing, or run `jwc serve` from a checkout.
 FROM debian:trixie-slim AS fetch
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -21,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #   whole-table aggregates         /api/v1/stats
 #   timestamptz - interval         the 24-hour window in /api/v1/stats
 #   long `+` chains                the landing page is 360 concatenated lines
-# Do not pin below 0.9.9.
+# Do not pin below 0.9.9 — see the NOTE above: that tag does not exist yet.
 ARG JWC_VERSION=0.9.9
 RUN curl -fsSL https://github.com/just-web-code/jwc-lang/releases/download/v${JWC_VERSION}/jwc-v${JWC_VERSION}-x86_64-linux.tar.gz \
         | tar -xz -C /usr/local/bin \
