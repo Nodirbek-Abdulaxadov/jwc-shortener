@@ -33,6 +33,11 @@ routes "/api/links" use MetricsTracker {
 --- one deploy away from going stale.
 routes "/{code}" use MetricsTracker, RateLimit {
     route GET "" {
-        return redirect(302, LinkService.resolve(@code));
+        -- `redirectExternal`, not `redirect`: this service exists to send a
+        -- caller to an address someone else supplied, which is an open
+        -- redirect and is the product. `redirect` refuses an off-site
+        -- target (routing.md §6.4) precisely so that a service which does
+        -- this has to say so, in one greppable word.
+        return redirectExternal(302, LinkService.resolve(@code));
     }
 }
