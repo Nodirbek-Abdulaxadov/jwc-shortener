@@ -21,11 +21,14 @@ src/
     links.jwc             create / resolve / detail
     qr.jwc                QR markup (was the `qr-lite` package)
   routes/
-    site.jwc              the static mount, and the fixed names it cannot serve
+    site.jwc              the static mount, and two 301s for the 0.9 URLs
     links.jwc             POST /api/links, GET /api/links/{code}, GET /{code}
     ops.jwc               /api/v1/stats
 public/
   index.html              the landing page
+  robots.txt              crawler rules
+  sitemap.xml             the two indexable URLs
+  docs/index.html         Swagger UI over the OpenAPI document
   assets/og.svg           the social card
   assets/openapi.json     written by `jwc openapi` — see below
 ```
@@ -38,6 +41,15 @@ they never change per request, and as files they get an ETag, a 304 and a
 `Cache-Control` for free — and under `jwc build` they are walked at compile
 time and `include_bytes!`d into the binary, so the container needs no
 directory beside it.
+
+`robots.txt`, `sitemap.xml` and `docs/index.html` were routes until jwc
+0.9.942: routing.md §10.2 put every route ahead of a `static` mount, and
+`/{code}` is a route, so `/robots.txt` reached the redirect handler and
+answered "no such link". §10.2 now ranks a mount ahead of a route that
+bound a path parameter. The cost is that a mount takes no middleware, so
+these four paths no longer reach `MetricsTracker` and drop out of
+`/api/v1/stats` — in exchange they are cached, revalidated with an ETag,
+and served without touching the database.
 
 Regenerate the OpenAPI document after changing a route:
 
@@ -84,16 +96,17 @@ jwc serve .
 The port is `serve(int(env("PORT") ?? "8080"))` in `src/app.jwc`, evaluated
 at boot. `jwc serve --port N` overrides it.
 
-Requires **jwc 0.9.9+**. Every one of these is used here and none is in an
-earlier release:
+Requires **jwc 0.9.942+**. Every one of these is used here and none is in
+an earlier release:
 
 | Needed for | Feature |
 |---|---|
-| `/`, `/docs`, `/robots.txt`, `/sitemap.xml`, `/og.svg` | `content(mime, body)` — the non-JSON body |
+| `/robots.txt`, `/sitemap.xml`, `/docs` served from `public/` | a `static` mount outranking `/{code}` (routing.md §10.2, 0.9.942) |
+| `GET /{code}` | `redirectExternal` — `redirect` refuses an off-site target (0.9.941) |
 | the retry-on-conflict loop in `LinkService.create` | `break` / `continue` |
 | `/api/v1/stats` | whole-table aggregates (`as { total: count(x) }`) |
-| the 24-hour window in `/api/v1/stats` | `timestamptz - interval` |
-| the landing page | `+` chains longer than 128 terms |
+| the 24-hour window in `/api/v1/stats` | `timestamptz - interval` (0.9.935) |
+| `RateLimit` | `redis.rate_limit` (0.9.918) |
 
 ## `JWC_REDIS_URL` is not optional
 

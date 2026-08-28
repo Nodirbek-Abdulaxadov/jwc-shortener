@@ -24,11 +24,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # `import redis;` (names.md §6.2.3), which `src/middleware/ratelimit.jwc`
 # writes. An older compiler does not know the rule; a newer one enforces it.
 #
+# 0.9.942 for a `static` mount outranking `/{code}` (routing.md §10.2) —
+# below it `/robots.txt` reaches the redirect handler and 404s.
+# 0.9.941 for `redirectExternal`, which is what `GET /{code}` calls.
 # 0.9.936 for `timestamptz - interval`, which every release before it got
 # right in `jwc serve` and wrong in `jwc build` — so a native image built
 # on an older compiler would answer `/api/v1/stats` with a 500 that the
 # interpreter never showed.
-ARG JWC_VERSION=0.9.936
+ARG JWC_VERSION=0.9.942
 RUN curl -fsSL https://github.com/just-web-code/jwc-lang/releases/download/v${JWC_VERSION}/jwc-v${JWC_VERSION}-x86_64-linux.tar.gz \
         | tar -xz -C /usr/local/bin \
     && chmod +x /usr/local/bin/jwc \
