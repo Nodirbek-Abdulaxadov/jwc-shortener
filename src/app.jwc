@@ -3,10 +3,9 @@ namespace app;
 --- jwc-shortener — the URL shortener behind https://1kb.uz.
 ---
 --- One JWC program serves three things:
----   1. the landing page at `/`        — `views.pages`
----   2. the shortener API + redirects  — `routes.links`
----   3. traffic stats + Swagger UI     — `routes.ops`, `routes.pages`
-
+--- 1. the landing page at `/`        — `views.pages`
+--- 2. the shortener API + redirects  — `routes.links`
+--- 3. traffic stats + Swagger UI     — `routes.ops`, `routes.pages`
 database App : Postgres {
     init() {
         pool_size         = int(env("DB_POOL") ?? "20");

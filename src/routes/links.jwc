@@ -15,11 +15,7 @@ routes "/api/links" use MetricsTracker {
         let full = $base + "/" + $code;
         let short = string.strip_prefix(string.strip_prefix($full, "https://"), "http://");
 
-        return created(json({
-            code:   $code,
-            short:  $short,
-            qr_svg: Qr.img_tag($full)
-        }));
+        return created(json({ code: $code, short: $short, qr_svg: Qr.img_tag($full) }));
     }
 
     route GET "{code}" {

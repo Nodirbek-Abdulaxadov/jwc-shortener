@@ -23,7 +23,8 @@ service Qr {
 
     function img_tag(url: text) -> text {
         let encoded = Qr.encode($url);
-        return "<img src='https://barcodeapi.org/api/qr/" + $encoded
+        return "<img src='https://barcodeapi.org/api/qr/"
+            + $encoded
             + "?format=svg' alt='QR Code'/>";
     }
 }
