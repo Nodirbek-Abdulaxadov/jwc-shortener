@@ -19,11 +19,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #   break / continue               the retry-on-conflict loop in LinkService
 #   whole-table aggregates         /api/v1/stats
 #   timestamptz - interval         the 24-hour window in /api/v1/stats
-#   long `+` chains                the landing page is 360 concatenated lines
+#   static "/" from "public"       the landing page and the assets
 # Do not pin below 0.9.918: from that release `redis.*` requires
 # `import redis;` (names.md §6.2.3), which `src/middleware/ratelimit.jwc`
 # writes. An older compiler does not know the rule; a newer one enforces it.
-ARG JWC_VERSION=0.9.918
+#
+# 0.9.936 for `timestamptz - interval`, which every release before it got
+# right in `jwc serve` and wrong in `jwc build` — so a native image built
+# on an older compiler would answer `/api/v1/stats` with a 500 that the
+# interpreter never showed.
+ARG JWC_VERSION=0.9.936
 RUN curl -fsSL https://github.com/just-web-code/jwc-lang/releases/download/v${JWC_VERSION}/jwc-v${JWC_VERSION}-x86_64-linux.tar.gz \
         | tar -xz -C /usr/local/bin \
     && chmod +x /usr/local/bin/jwc \
@@ -41,6 +46,11 @@ COPY --from=fetch /usr/local/bin/jwc /usr/local/bin/jwc
 COPY jwcproj.json /app/jwcproj.json
 COPY src /app/src
 COPY migrations /app/migrations
+# `jwc serve` reads the mount root per request, so the files come along.
+# A `jwc build` image would not need this — the walk happens at compile
+# time and the bytes go inside the binary (routing.md §10.6) — which is
+# one more reason to make that switch once it is measured.
+COPY public /app/public
 
 EXPOSE 8080
 ENV RUST_LOG=info

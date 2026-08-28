@@ -13,11 +13,29 @@ import redis;
 --- `trusted_proxies` list in `app.jwc`; with none configured it is the
 --- socket peer. That is the whole rule (config.md §3.3) and it is why this
 --- no longer hand-reads `cf-connecting-ip`.
+--- **1.0 has no in-process fallback**, unlike the 0.9 package: without a
+--- server every `redis.*` name but `enabled()` raises. Unguarded, this
+--- middleware answers 500 to every request of a deployment that has no
+--- Redis — including the local `docker compose` loop with the container
+--- stopped. A shortener over its rate limit is a nuisance, not a
+--- correctness problem, so the call is guarded and a Redis-less
+--- deployment serves.
+---
+--- It does not pretend to be rate limited either. `jwc_redis_pool_*` in
+--- `/metrics` appears only when Redis is configured, which is how an
+--- operator tells the two apart.
+---
+--- Written as an `if` around the work rather than an early exit: falling
+--- off the end is how a middleware lets the chain continue
+--- (middleware.md §4), and a bare `return;` in the request phase is
+--- **not** that — it answers 204 and stops.
 middleware RateLimit {
-    let ip = request.client_ip();
-    let allowed = redis.rate_limit("rl:" + string.of($ip), 60, 60);
+    if (redis.enabled()) {
+        let ip = request.client_ip();
+        let allowed = redis.rate_limit("rl:" + string.of($ip), 60, 60);
 
-    if (!$allowed) {
-        throw TooManyRequests("juda ko'p so'rov");
+        if (!$allowed) {
+            throw TooManyRequests("juda ko'p so'rov");
+        }
     }
 }

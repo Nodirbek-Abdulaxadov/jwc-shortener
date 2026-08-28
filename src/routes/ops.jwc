@@ -29,6 +29,15 @@ routes "/api/v1/stats" use MetricsTracker {
             }
             first;
 
+        --- The five most-followed links, which the 0.9 payload carried and
+        --- the landing page still reads. `index on (hits)` is what keeps
+        --- this from sorting the whole table on every call.
+        let top = select L from App.public.Links
+            where hits > 0
+            as { code, hits }
+            orderby hits desc
+            limit 5;
+
         let day = select A from App.public.ApiCalls
             where ts > date.now() - date.hours(24)
             as { total: count(A.id) }
@@ -41,9 +50,13 @@ routes "/api/v1/stats" use MetricsTracker {
             -- `sum` answers `numeric`, which is carried as a JSON string so
             -- no float ever touches money (types.md §2.1). A click counter
             -- is not money and the landing page reads it as a number, so
-            -- it is narrowed back here.
-            total_clicks:  int($links.clicks),
+            -- it is narrowed back here. `?? "0"` is not decoration: `sum`
+            -- over no rows is null, and without it an empty `link` table
+            -- answers `400 {"error":"`` is not a number"}` — measured, on
+            -- the endpoint the landing page calls on every page load.
+            total_clicks:  int($links.clicks ?? "0"),
             top_link_hits: $links.top,
+            top_endpoints: $top,
             written_in:    "JWC",
             source:        "https://github.com/just-web-code/jwc-shortener"
         });

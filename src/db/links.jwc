@@ -7,6 +7,11 @@ table Links of App.public as "link" {
     url        varchar(2048);
     hits       int default 0;
     created_at timestamptz default now();
+
+    --- `/api/v1/stats` orders by this to find the five most-followed
+    --- links. Without the index that is a sort of the whole table on
+    --- every call to a public endpoint.
+    index on (hits);
 }
 
 --- One logged request. Written from `MetricsTracker`'s `after` block, so

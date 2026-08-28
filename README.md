@@ -21,11 +21,33 @@ src/
     links.jwc             create / resolve / detail
     qr.jwc                QR markup (was the `qr-lite` package)
   routes/
-    pages.jwc             /, /docs, /openapi.json, /robots.txt, /sitemap.xml, /og.svg
+    site.jwc              the static mount, and the fixed names it cannot serve
     links.jwc             POST /api/links, GET /api/links/{code}, GET /{code}
-    ops.jwc               /healthz, /api/v1/stats
-  views/pages.jwc         the HTML, XML and SVG bodies
+    ops.jwc               /api/v1/stats
+public/
+  index.html              the landing page
+  assets/og.svg           the social card
+  assets/openapi.json     written by `jwc openapi` — see below
 ```
+
+The pages are **files**, served by `static "/" from "public"`. The port
+before this one carried them as 489 lines of `+ "\n"` string concatenation
+in a `views/pages.jwc`, because 0.9 held the HTML in an `r"..."` literal
+and 1.0 has no multi-line string. Neither form was right: they are files,
+they never change per request, and as files they get an ETag, a 304 and a
+`Cache-Control` for free — and under `jwc build` they are walked at compile
+time and `include_bytes!`d into the binary, so the container needs no
+directory beside it.
+
+Regenerate the OpenAPI document after changing a route:
+
+```bash
+jwc openapi --out public/assets/openapi.json --title "1kb.uz API"
+```
+
+It is derived from the typed signatures, so unlike the hand-written 2 KB
+JSON string it replaced there is no second description of the route table
+to drift.
 
 ## Endpoints
 
@@ -33,9 +55,10 @@ src/
 |---|---|---|
 | `GET`  | `/` | landing page, `text/html` |
 | `GET`  | `/docs` | Swagger UI, `text/html` |
-| `GET`  | `/openapi.json` | the OpenAPI document |
-| `GET`  | `/robots.txt`, `/sitemap.xml`, `/og.svg` | crawler and social-card files |
-| `GET`  | `/healthz` | `{"status":"ok"}` — liveness probe |
+| `GET`  | `/assets/openapi.json` | the OpenAPI document (`/openapi.json` 301s here) |
+| `GET`  | `/robots.txt`, `/sitemap.xml` | crawler files |
+| `GET`  | `/assets/og.svg` | the social card (`/og.svg` 301s here) |
+| `GET`  | `/healthz`, `/readyz`, `/metrics` | operational, served by the runtime |
 | `POST` | `/api/links` | `{"url":"..."}` → `{code, short, qr_svg}` |
 | `GET`  | `/api/links/{code}` | `{code, url, hits, created_at}` |
 | `GET`  | `/{code}` | 302 to the original URL, counting the click |
@@ -55,7 +78,7 @@ export PUBLIC_BASE_URL=http://localhost:8080
 # 3. Migrate + run
 jwc migrate up .
 jwc serve .
-# → 11 routes, listening on http://0.0.0.0:8080
+# → 9 routes, listening on http://0.0.0.0:8080
 ```
 
 The port is `serve(int(env("PORT") ?? "8080"))` in `src/app.jwc`, evaluated

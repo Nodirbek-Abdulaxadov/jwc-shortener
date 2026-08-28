@@ -15,12 +15,20 @@ middleware MetricsTracker {
         -- `after` may not raise (E0811): the response has already been
         -- decided and there is no handler left to catch anything. A
         -- telemetry row is not worth a 500 the client would never see.
+        --
+        -- `buffered` hands the row to the batch writer and returns, so no
+        -- request waits on the insert. This is the whole subject of
+        -- BENCHMARK.md — taking the write off the critical path measured
+        -- 7 951 -> 102 551 req/s on the native backend — and the port
+        -- dropped the word. Rows are dropped rather than queued without
+        -- bound if the writer falls behind; `jwc_log_dropped_total` counts
+        -- them, which for traffic telemetry is the right trade.
         insert into App.public.ApiCalls {
             path       = request.route(),
             method     = request.method(),
             status     = response.status(),
             latency_ms = int(response.duration_ms()),
             latency_us = int(response.duration_us())
-        };
+        } buffered;
     }
 }
